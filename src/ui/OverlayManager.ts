@@ -1,8 +1,6 @@
 import {
   HERO_FORMS,
-  SIM_HZ,
   type AudioSettings,
-  type BiomeId,
   type BossId,
   type DeviceGlyphMap,
   type FpsLimitOption,
@@ -21,8 +19,13 @@ import {
   type TouchLayoutConfig,
   type TouchVisibilitySetting,
   type UpgradeKey,
+  type VirtualGamepadSnapshot,
 } from '../contracts/index.js';
 import { formatKeyCode } from '../input/InputOrchestrator.js';
+import { buildMapPanel } from './MapOverlay.js';
+import { buildShopPanel } from './ShopMenus.js';
+import { buildTouchCustomizerSection } from './TouchCustomizer.js';
+import { buildCreditsPanel, buildGameOverPanel, buildVictoryPanel } from './VictoryScreens.js';
 
 export interface OverlayActions {
   onContinue(): void;
@@ -88,29 +91,6 @@ export interface OverlayViewState {
   toastMessage: string | null;
 }
 
-const SHOP_META: Record<ShopId, { title: string; subtitle: string }> = {
-  vespera: { title: 'Vespera — Core Upgrades', subtitle: 'Expand vitality, relic slots, and resilience' },
-  orla: { title: 'Orla — Form Mastery & Maps', subtitle: 'Unlock form evolutions and cartography tools' },
-  barnaby: { title: 'Barnaby — Relic Bazaar', subtitle: 'Buy and equip mystical combat charms' },
-  garron: { title: 'Garron — Arena & Boss Rematch', subtitle: 'Challenge conquered or upcoming guardians' },
-  barnacle: { title: 'Captain Barnacle — Ghost Ship', subtitle: 'Endless wave survival aboard the cursed galleon' },
-  codex: { title: 'Codex — Adventurer Tome', subtitle: 'Controls, elemental forms, and quest records' },
-};
-
-const BIOME_COLORS: Record<BiomeId, string> = {
-  MLAIR: '#4a306d',
-  OPOUSO: '#2e6b5e',
-  TDM: '#3b7a3d',
-  FLIN: '#1f5c43',
-  AP: '#6b4e2b',
-  ATVC: '#8b2e2e',
-  DSI: '#947435',
-  LAB: '#2b5d7a',
-  TEMP: '#69538c',
-  EVIL: '#591c48',
-  GSHIP: '#244763',
-};
-
 const KEYBIND_LABELS: ReadonlyArray<{ key: keyof KeyBindings; label: string }> = [
   { key: 'left', label: 'Move Left' },
   { key: 'right', label: 'Move Right' },
@@ -135,14 +115,6 @@ const FORM_SHORT_LABELS: Record<HeroFormId, string> = {
   krunk_shadow: 'Shadow',
 };
 
-function formatTicksAsTime(ticks: number): string {
-  const totalSec = Math.max(0, ticks / SIM_HZ);
-  const mins = Math.floor(totalSec / 60);
-  const secs = Math.floor(totalSec % 60);
-  const centis = Math.floor((totalSec - Math.floor(totalSec)) * 100);
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(centis).padStart(2, '0')}`;
-}
-
 function deviceLabel(device: InputDeviceMode): string {
   switch (device) {
     case 'keyboard':
@@ -154,10 +126,33 @@ function deviceLabel(device: InputDeviceMode): string {
     case 'gamepad_switch':
       return 'SWITCH PAD';
     case 'gamepad_tesla':
-      return 'IN-CAR PAD';
+      return 'TESLA PAD';
     case 'touch':
       return 'TOUCH';
   }
+}
+
+function makeNeutralButtons(count = 16): Array<{ pressed: boolean; value: number }> {
+  return Array.from({ length: count }, () => ({ pressed: false, value: 0 }));
+}
+
+function makeVirtualXboxSnapshot(activePulse: boolean): VirtualGamepadSnapshot {
+  return {
+    id: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e)',
+    mapping: 'standard',
+    axes: [activePulse ? 0.5 : 0, 0, 0, 0],
+    buttons: makeNeutralButtons(),
+  };
+}
+
+function makeVirtualTeslaSnapshot(activePulse: boolean): VirtualGamepadSnapshot {
+  return {
+    id: 'Tesla In-Car USB Gamepad (HID)',
+    mapping: '',
+    // Axis 9 POV hat: -3/7 is Right (triggers device switch), 3.2857 is neutral
+    axes: [0, 0, 0, 0, 0, 0, 0, 0, 0, activePulse ? -3 / 7 : 3.2857],
+    buttons: makeNeutralButtons(),
+  };
 }
 
 export class OverlayManager {
@@ -170,6 +165,7 @@ export class OverlayManager {
   private _toastEl: HTMLElement | null = null;
   private _drawerEl: HTMLElement | null = null;
   private _drawerStatsEl: HTMLElement | null = null;
+  private _deviceQaBtns = new Map<string, HTMLButtonElement>();
 
   private _drawerOpen = false;
   private _selectedWarpRoom = '';
@@ -242,6 +238,7 @@ export class OverlayManager {
     this._renderToast(doc, view);
     if (this._drawerOpen && this._drawerStatsEl) {
       this._updateDrawerTelemetry(view);
+      this._syncDeviceQaButtons(view);
     }
   }
 
@@ -251,7 +248,7 @@ export class OverlayManager {
       this._navCooldown = Math.max(0, this._navCooldown - dt);
     }
 
-    // Close / Back shortcuts
+    // Close / Back shortcuts across Keyboard, Xbox, PS, Switch, Tesla Gamepad & Touch
     const gamepadBack = view.activeDevice !== 'keyboard' && frame.stompPressed;
     if (frame.pausePressed || gamepadBack) {
       if (view.screenMode === 'paused') {
@@ -283,32 +280,77 @@ export class OverlayManager {
 
     if (!this._screenLayer) return;
 
-    // Move focus with Up/Down on Keyboard or Gamepad
-    if (this._navCooldown <= 0 && Math.abs(frame.moveY) > 0.5) {
+    const doc = this._root.ownerDocument;
+    const active = (doc?.activeElement as HTMLElement | null) ?? null;
+
+    // Range slider horizontal adjustment via Gamepad / Keyboard Left-Right
+    if (
+      this._navCooldown <= 0 &&
+      Math.abs(frame.moveX) > 0.5 &&
+      active &&
+      active.tagName === 'INPUT' &&
+      (active as HTMLInputElement).type === 'range' &&
+      this._screenLayer.contains(active)
+    ) {
+      const rangeEl = active as HTMLInputElement;
+      const step = Number(rangeEl.step) || 0.05;
+      const min = Number(rangeEl.min);
+      const max = Number(rangeEl.max);
+      const cur = Number(rangeEl.value);
+      const dir = frame.moveX > 0 ? 1 : -1;
+      const next = Math.max(
+        Number.isFinite(min) ? min : -Infinity,
+        Math.min(Number.isFinite(max) ? max : Infinity, cur + dir * step),
+      );
+      if (next !== cur) {
+        rangeEl.value = String(Number(next.toFixed(4)));
+        rangeEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      this._navCooldown = 0.08;
+      return;
+    }
+
+    // Move focus with Up/Down or Left/Right on Keyboard or Gamepad
+    const moveVertical = Math.abs(frame.moveY) > 0.5;
+    const moveHorizontal = Math.abs(frame.moveX) > 0.5;
+    if (this._navCooldown <= 0 && (moveVertical || moveHorizontal)) {
       const focusables = Array.from(
-        this._screenLayer.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'),
+        this._screenLayer.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled)',
+        ),
       );
       if (focusables.length > 0) {
-        const doc = this._root.ownerDocument;
-        const activeIdx = doc ? focusables.indexOf(doc.activeElement as HTMLElement) : -1;
-        const delta = frame.moveY < 0 ? 1 : -1;
+        const activeIdx = active ? focusables.indexOf(active) : -1;
+        const delta = moveVertical ? (frame.moveY < 0 ? 1 : -1) : frame.moveX > 0 ? 1 : -1;
         const nextIdx =
           activeIdx < 0
             ? delta > 0
               ? 0
               : focusables.length - 1
             : (activeIdx + delta + focusables.length) % focusables.length;
-        focusables[nextIdx]?.focus();
-        this._navCooldown = 0.17;
+        const nextEl = focusables[nextIdx];
+        if (nextEl) {
+          nextEl.focus?.({ preventScroll: true });
+          if (typeof nextEl.scrollIntoView === 'function') {
+            nextEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          }
+        }
+        this._navCooldown = 0.16;
       }
     }
 
     // Confirm via Gamepad A / Y (keyboard Enter/Space natively clicks focused buttons)
     if (view.activeDevice !== 'keyboard' && (frame.jumpPressed || frame.interactPressed)) {
-      const doc = this._root.ownerDocument;
-      const active = doc?.activeElement as HTMLElement | null;
-      if (active && this._screenLayer.contains(active) && typeof active.click === 'function') {
-        active.click();
+      if (active && this._screenLayer.contains(active)) {
+        if (active.tagName === 'SELECT') {
+          const sel = active as HTMLSelectElement;
+          if (sel.options.length > 0) {
+            sel.selectedIndex = (sel.selectedIndex + 1) % sel.options.length;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        } else if (typeof active.click === 'function') {
+          active.click();
+        }
       } else {
         const firstBtn = this._screenLayer.querySelector<HTMLButtonElement>('button:not(:disabled)');
         firstBtn?.click();
@@ -321,6 +363,7 @@ export class OverlayManager {
       window.removeEventListener('keydown', this._onCaptureKeyDown, { capture: true });
     }
     this._listeningBindKey = null;
+    this._deviceQaBtns.clear();
     while (this._root.firstChild) {
       this._root.removeChild(this._root.firstChild);
     }
@@ -332,7 +375,7 @@ export class OverlayManager {
   }
 
   // --------------------------------------------------------------------------
-  // Screen Rendering Dispatch
+  // Screen Rendering Dispatch (Delegates cleanly to specialized meta-UI modules)
   // --------------------------------------------------------------------------
 
   private _renderScreenLayer(doc: Document, view: OverlayViewState): void {
@@ -362,19 +405,19 @@ export class OverlayManager {
         panel = this._buildOptionsPanel(doc, view);
         break;
       case 'shop':
-        panel = this._buildShopPanel(doc, view);
+        panel = buildShopPanel(doc, view, this._actions);
         break;
       case 'map':
-        panel = this._buildMapPanel(doc, view);
+        panel = buildMapPanel(doc, view, this._actions);
         break;
       case 'victory':
-        panel = this._buildVictoryPanel(doc, view);
+        panel = buildVictoryPanel(doc, view, this._actions);
         break;
       case 'gameover':
-        panel = this._buildGameOverPanel(doc, view);
+        panel = buildGameOverPanel(doc, view, this._actions);
         break;
       case 'credits':
-        panel = this._buildCreditsPanel(doc, view);
+        panel = buildCreditsPanel(doc, view, this._actions);
         break;
       default:
         return;
@@ -384,9 +427,11 @@ export class OverlayManager {
     this._root.appendChild(backdrop);
     this._screenLayer = backdrop;
 
-    // Auto-focus primary button for immediate keyboard/gamepad flow
-    const firstBtn = panel.querySelector<HTMLButtonElement>('button:not(:disabled)');
-    firstBtn?.focus({ preventScroll: true });
+    // Auto-focus primary interactive button for immediate keyboard/gamepad flow
+    const preferred =
+      panel.querySelector<HTMLButtonElement>('.kq-btn-primary:not(:disabled)') ??
+      panel.querySelector<HTMLButtonElement>('button:not(:disabled)');
+    preferred?.focus?.({ preventScroll: true });
   }
 
   private _buildTitlePanel(doc: Document, view: OverlayViewState): HTMLElement {
@@ -432,6 +477,7 @@ export class OverlayManager {
     list.appendChild(this._btn(doc, 'GHOST SHIP ENDLESS', 'kq-btn', () => this._actions.onStartGhostShip()));
     list.appendChild(this._btn(doc, 'TIME ATTACK', 'kq-btn', () => this._actions.onStartTimeAttack()));
     list.appendChild(this._btn(doc, 'OPTIONS', 'kq-btn', () => this._actions.onOpenOptions('title')));
+    list.appendChild(this._btn(doc, 'CREDITS', 'kq-btn', () => this._actions.onOpenCredits()));
 
     panel.appendChild(list);
 
@@ -526,7 +572,7 @@ export class OverlayManager {
     const list = doc.createElement('div');
     list.className = 'kq-menu-list';
     list.appendChild(this._btn(doc, 'RESUME', 'kq-btn kq-btn-primary', () => this._actions.onResume()));
-    list.appendChild(this._btn(doc, 'WORLD MAP', 'kq-btn', () => this._actions.onOpenMap()));
+    list.appendChild(this._btn(doc, 'WORLD MAP', 'kq-btn kq-btn-accent', () => this._actions.onOpenMap()));
     list.appendChild(this._btn(doc, 'OPTIONS', 'kq-btn', () => this._actions.onOpenOptions('paused')));
     list.appendChild(this._btn(doc, 'RETURN TO HUB', 'kq-btn', () => this._actions.onReturnToHub()));
     list.appendChild(
@@ -558,10 +604,9 @@ export class OverlayManager {
     const scroll = doc.createElement('div');
     scroll.className = 'kq-panel-scroll';
 
-    // 1. Display & Performance
+    // 1. Display & Art
     const displaySec = this._section(doc, 'Display & Art');
 
-    // FPS Limit
     const fpsRow = this._optRow(doc, 'FPS Limit');
     const fpsGroup = doc.createElement('div');
     fpsGroup.className = 'kq-seg-group';
@@ -579,7 +624,6 @@ export class OverlayManager {
     fpsRow.appendChild(fpsGroup);
     displaySec.appendChild(fpsRow);
 
-    // Classic Native-Snap
     const snapRow = this._optRow(doc, 'Classic Native-Snap');
     snapRow.appendChild(
       this._btn(
@@ -591,7 +635,6 @@ export class OverlayManager {
     );
     displaySec.appendChild(snapRow);
 
-    // Screen Shake
     const shakeRow = this._optRow(doc, 'Screen Shake');
     shakeRow.appendChild(
       this._btn(
@@ -603,7 +646,6 @@ export class OverlayManager {
     );
     displaySec.appendChild(shakeRow);
 
-    // Custom Pack
     const packRow = this._optRow(doc, 'Art Style');
     const packGroup = doc.createElement('div');
     packGroup.className = 'kq-seg-group';
@@ -625,10 +667,10 @@ export class OverlayManager {
 
     scroll.appendChild(displaySec);
 
-    // 2. Controls & Touch
-    const ctrlSec = this._section(doc, 'Touch & Gamepad Controls');
+    // 2. Input & Gamepad Settings
+    const ctrlSec = this._section(doc, 'Device & Gamepad Controls');
 
-    const touchModeRow = this._optRow(doc, 'Touch Controls');
+    const touchModeRow = this._optRow(doc, 'Touch Overlay Visibility');
     const touchGroup = doc.createElement('div');
     touchGroup.className = 'kq-seg-group';
     const touchChoices: ReadonlyArray<{ mode: TouchVisibilitySetting; label: string }> = [
@@ -648,32 +690,6 @@ export class OverlayManager {
     }
     touchModeRow.appendChild(touchGroup);
     ctrlSec.appendChild(touchModeRow);
-
-    ctrlSec.appendChild(
-      this._sliderRow(
-        doc,
-        'Touch Opacity',
-        0.2,
-        0.65,
-        0.01,
-        view.settings.input.touchLayout.opacity,
-        (v) => `${Math.round(v * 100)}%`,
-        (v) => this._actions.onUpdateTouchLayout({ opacity: v }),
-      ),
-    );
-
-    ctrlSec.appendChild(
-      this._sliderRow(
-        doc,
-        'Touch Scale',
-        0.75,
-        1.35,
-        0.05,
-        view.settings.input.touchLayout.scale,
-        (v) => `${Math.round(v * 100)}%`,
-        (v) => this._actions.onUpdateTouchLayout({ scale: v }),
-      ),
-    );
 
     const hapticRow = this._optRow(doc, 'Gamepad Haptics');
     hapticRow.appendChild(
@@ -698,10 +714,12 @@ export class OverlayManager {
         (v) => this._actions.onUpdateInputSettings({ deadzone: v }),
       ),
     );
-
     scroll.appendChild(ctrlSec);
 
-    // 3. Audio
+    // 3. Dedicated Interactive Touch Layout Customizer
+    scroll.appendChild(buildTouchCustomizerSection(doc, view, this._actions));
+
+    // 4. Audio
     const audioSec = this._section(doc, 'Audio');
     audioSec.appendChild(
       this._sliderRow(
@@ -751,7 +769,7 @@ export class OverlayManager {
     audioSec.appendChild(muteRow);
     scroll.appendChild(audioSec);
 
-    // 4. Key Bindings
+    // 5. Key Bindings
     const bindSec = this._section(doc, 'Keyboard Bindings');
     const bindGrid = doc.createElement('div');
     bindGrid.className = 'kq-bind-grid';
@@ -792,558 +810,6 @@ export class OverlayManager {
     scroll.appendChild(bindSec);
     panel.appendChild(scroll);
 
-    return panel;
-  }
-
-  private _buildShopPanel(doc: Document, view: OverlayViewState): HTMLElement {
-    const shopId: ShopId = view.activeShop ?? 'codex';
-    const meta = SHOP_META[shopId];
-
-    const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-wide';
-
-    const header = doc.createElement('div');
-    header.className = 'kq-panel-header';
-
-    const leftHead = doc.createElement('div');
-    const h2 = doc.createElement('h2');
-    h2.className = 'kq-panel-heading';
-    h2.textContent = meta.title;
-    const sub = doc.createElement('div');
-    sub.className = 'kq-panel-subheading';
-    sub.textContent = meta.subtitle;
-    leftHead.append(h2, sub);
-
-    const rightHead = doc.createElement('div');
-    rightHead.className = 'kq-shop-balance';
-    const bal = doc.createElement('span');
-    bal.textContent = `◆ ${view.simState.progress.crystals}`;
-    const closeBtn = this._btn(doc, 'CLOSE', 'kq-btn kq-btn-sm kq-btn-primary', () => this._actions.onCloseShop());
-    rightHead.append(bal, closeBtn);
-
-    header.append(leftHead, rightHead);
-    panel.appendChild(header);
-
-    const scroll = doc.createElement('div');
-    scroll.className = 'kq-panel-scroll';
-
-    if (shopId === 'vespera' || shopId === 'orla') {
-      const upgrades = view.catalog.upgrades.filter((u) => u.shop === shopId);
-      const list = doc.createElement('div');
-      list.className = 'kq-card-list';
-
-      for (const upg of upgrades) {
-        const curLevel = view.simState.progress.upgradeLevels[upg.key] ?? 0;
-        const maxed = curLevel >= upg.maxLevel;
-        const price = upg.basePrice + curLevel * upg.priceStep;
-        const formLocked =
-          upg.requiredForm !== undefined && !view.simState.progress.unlockedForms.includes(upg.requiredForm);
-        const canAfford = view.simState.progress.crystals >= price;
-
-        const card = doc.createElement('div');
-        card.className = 'kq-card';
-
-        const info = doc.createElement('div');
-        info.className = 'kq-card-info';
-
-        const titleRow = doc.createElement('div');
-        titleRow.className = 'kq-card-title';
-        titleRow.textContent = upg.name;
-
-        const lvlBadge = doc.createElement('span');
-        lvlBadge.className = maxed ? 'kq-badge kq-badge-active' : 'kq-badge';
-        lvlBadge.textContent = maxed ? 'MAX' : `LV ${curLevel}/${upg.maxLevel}`;
-        titleRow.appendChild(lvlBadge);
-
-        if (upg.requiredForm) {
-          const formBadge = doc.createElement('span');
-          formBadge.className = formLocked ? 'kq-badge' : 'kq-badge kq-badge-ready';
-          formBadge.textContent = FORM_SHORT_LABELS[upg.requiredForm];
-          titleRow.appendChild(formBadge);
-        }
-
-        const desc = doc.createElement('div');
-        desc.className = 'kq-card-desc';
-        desc.textContent = upg.description;
-        info.append(titleRow, desc);
-
-        const buyBtn = this._btn(
-          doc,
-          maxed ? 'MAXED' : formLocked ? 'LOCKED' : `BUY ${price}◆`,
-          !maxed && !formLocked && canAfford ? 'kq-btn kq-btn-sm kq-btn-primary' : 'kq-btn kq-btn-sm',
-          () => {
-            this._actions.onBuyUpgrade(upg.key);
-          },
-        );
-        buyBtn.disabled = maxed || formLocked || !canAfford;
-
-        card.append(info, buyBtn);
-        list.appendChild(card);
-      }
-      scroll.appendChild(list);
-    } else if (shopId === 'barnaby') {
-      const maxSlots = 1 + (view.simState.progress.upgradeLevels.ItemSlot ?? 0);
-      const equippedCount = view.simState.progress.equippedRelics.length;
-
-      const slotBar = doc.createElement('div');
-      slotBar.className = 'kq-badge kq-badge-gold';
-      slotBar.textContent = `RELIC SLOTS EQUIPPED: ${equippedCount} / ${maxSlots}`;
-      scroll.appendChild(slotBar);
-
-      const list = doc.createElement('div');
-      list.className = 'kq-card-list';
-
-      for (const relic of view.catalog.relics) {
-        const owned = view.simState.progress.ownedRelics.includes(relic.id);
-        const equipped = view.simState.progress.equippedRelics.includes(relic.id);
-        const canAfford = view.simState.progress.crystals >= relic.price;
-
-        const card = doc.createElement('div');
-        card.className = equipped ? 'kq-card kq-card-equipped' : 'kq-card';
-
-        const info = doc.createElement('div');
-        info.className = 'kq-card-info';
-
-        const titleRow = doc.createElement('div');
-        titleRow.className = 'kq-card-title';
-        const swatch = doc.createElement('span');
-        swatch.className = 'kq-swatch';
-        swatch.style.backgroundColor = relic.iconColor;
-        const nameSpan = doc.createElement('span');
-        nameSpan.textContent = relic.name;
-        titleRow.append(swatch, nameSpan);
-
-        if (equipped) {
-          const eq = doc.createElement('span');
-          eq.className = 'kq-badge kq-badge-active';
-          eq.textContent = 'EQUIPPED';
-          titleRow.appendChild(eq);
-        }
-
-        const desc = doc.createElement('div');
-        desc.className = 'kq-card-desc';
-        desc.textContent = relic.description;
-        info.append(titleRow, desc);
-
-        let actionBtn: HTMLButtonElement;
-        if (!owned) {
-          actionBtn = this._btn(
-            doc,
-            `BUY ${relic.price}◆`,
-            canAfford ? 'kq-btn kq-btn-sm kq-btn-primary' : 'kq-btn kq-btn-sm',
-            () => {
-              this._actions.onBuyRelic(relic.id);
-            },
-          );
-          actionBtn.disabled = !canAfford;
-        } else {
-          actionBtn = this._btn(
-            doc,
-            equipped ? 'UNEQUIP' : 'EQUIP',
-            equipped ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm kq-btn-accent',
-            () => {
-              this._actions.onToggleEquipRelic(relic.id);
-            },
-          );
-        }
-
-        card.append(info, actionBtn);
-        list.appendChild(card);
-      }
-      scroll.appendChild(list);
-    } else if (shopId === 'garron') {
-      const list = doc.createElement('div');
-      list.className = 'kq-card-list';
-
-      for (const boss of view.catalog.bosses.values()) {
-        const defeated = view.simState.progress.defeatedBosses.includes(boss.id);
-        const card = doc.createElement('div');
-        card.className = defeated ? 'kq-card kq-card-equipped' : 'kq-card';
-
-        const info = doc.createElement('div');
-        info.className = 'kq-card-info';
-
-        const titleRow = doc.createElement('div');
-        titleRow.className = 'kq-card-title';
-        titleRow.textContent = boss.name;
-
-        const hpBadge = doc.createElement('span');
-        hpBadge.className = 'kq-badge kq-badge-gold';
-        hpBadge.textContent = `${boss.maxHp} HP`;
-        titleRow.appendChild(hpBadge);
-
-        if (defeated) {
-          const defBadge = doc.createElement('span');
-          defBadge.className = 'kq-badge kq-badge-active';
-          defBadge.textContent = 'DEFEATED';
-          titleRow.appendChild(defBadge);
-        }
-
-        const desc = doc.createElement('div');
-        desc.className = 'kq-card-desc';
-        const unlockTxt = boss.unlockForm ? ` · Unlocks ${FORM_SHORT_LABELS[boss.unlockForm]} Form` : '';
-        desc.textContent = `${boss.subtitle} (${boss.biome}) · Reward: ${boss.crystalReward}◆${unlockTxt}`;
-        info.append(titleRow, desc);
-
-        const fightBtn = this._btn(doc, 'CHALLENGE', 'kq-btn kq-btn-sm kq-btn-primary', () => {
-          this._actions.onChallengeBoss(boss.id);
-        });
-        card.append(info, fightBtn);
-        list.appendChild(card);
-      }
-      scroll.appendChild(list);
-    } else if (shopId === 'barnacle') {
-      const sec = this._section(doc, 'Cursed Galleon Endless Voyage');
-      const p = doc.createElement('div');
-      p.className = 'kq-card-desc';
-      p.textContent =
-        'Board the Ghost Ship and survive escalating waves of spectral raiders, hazard tiers, and relentless combo multipliers. Collect crystals and beat your wave record!';
-      sec.appendChild(p);
-
-      const stats = doc.createElement('div');
-      stats.className = 'kq-stat-grid';
-      stats.append(
-        this._statItem(doc, 'Best Wave', String(view.simState.progress.ghostShipBestWave)),
-        this._statItem(doc, 'High Score', String(view.simState.progress.ghostShipHighScore)),
-      );
-      sec.appendChild(stats);
-
-      sec.appendChild(
-        this._btn(doc, 'SET SAIL — LAUNCH GHOST SHIP', 'kq-btn kq-btn-primary', () => {
-          this._actions.onStartGhostShip();
-        }),
-      );
-      scroll.appendChild(sec);
-    } else {
-      // Codex — Controls, Forms, Quest Progress
-      const ctrlSec = this._section(doc, `Active Controls (${deviceLabel(view.activeDevice)})`);
-      const ctrlGrid = doc.createElement('div');
-      ctrlGrid.className = 'kq-stat-grid';
-      ctrlGrid.append(
-        this._statItem(doc, 'Jump', view.glyphs.jump),
-        this._statItem(doc, 'Dash / Form Ability', view.glyphs.dash),
-        this._statItem(doc, 'Air Stomp', view.glyphs.stomp),
-        this._statItem(doc, 'Switch Form', view.glyphs.form),
-        this._statItem(doc, 'Interact', view.glyphs.interact),
-        this._statItem(doc, 'Map / Pause', `${view.glyphs.map} / ${view.glyphs.pause}`),
-      );
-      ctrlSec.appendChild(ctrlGrid);
-      scroll.appendChild(ctrlSec);
-
-      const formSec = this._section(doc, 'Elemental Forms');
-      const formList = doc.createElement('div');
-      formList.className = 'kq-card-list';
-      for (const form of view.catalog.forms) {
-        const unlocked = view.simState.progress.unlockedForms.includes(form.id);
-        const card = doc.createElement('div');
-        card.className = unlocked ? 'kq-card kq-card-equipped' : 'kq-card';
-        const info = doc.createElement('div');
-        info.className = 'kq-card-info';
-        const titleRow = doc.createElement('div');
-        titleRow.className = 'kq-card-title';
-        const swatch = doc.createElement('span');
-        swatch.className = 'kq-swatch';
-        swatch.style.backgroundColor = form.palette[2] ?? '#ff4fa3';
-        const nm = doc.createElement('span');
-        nm.textContent = `${form.name} — ${form.abilityName}`;
-        const st = doc.createElement('span');
-        st.className = unlocked ? 'kq-badge kq-badge-active' : 'kq-badge';
-        st.textContent = unlocked ? 'UNLOCKED' : 'LOCKED';
-        titleRow.append(swatch, nm, st);
-        const desc = doc.createElement('div');
-        desc.className = 'kq-card-desc';
-        desc.textContent = form.description;
-        info.append(titleRow, desc);
-        card.appendChild(info);
-        formList.appendChild(card);
-      }
-      formSec.appendChild(formList);
-      scroll.appendChild(formSec);
-
-      const progSec = this._section(doc, 'Quest Ledger');
-      const progGrid = doc.createElement('div');
-      progGrid.className = 'kq-stat-grid';
-      progGrid.append(
-        this._statItem(
-          doc,
-          'Golden Coins',
-          `${view.simState.progress.collectedCoinIds.length} / ${view.catalog.totalCoins}`,
-        ),
-        this._statItem(doc, 'Bosses Defeated', `${view.simState.progress.defeatedBosses.length} / ${view.catalog.bosses.size}`),
-        this._statItem(
-          doc,
-          'Rooms Explored',
-          `${view.simState.progress.visitedRooms.length} / ${view.catalog.rooms.size}`,
-        ),
-        this._statItem(doc, 'Teleporters', String(view.simState.progress.unlockedTeleporters.length)),
-      );
-      progSec.appendChild(progGrid);
-      scroll.appendChild(progSec);
-    }
-
-    panel.appendChild(scroll);
-    return panel;
-  }
-
-  private _buildMapPanel(doc: Document, view: OverlayViewState): HTMLElement {
-    const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-wide';
-
-    const header = doc.createElement('div');
-    header.className = 'kq-panel-header';
-    const title = doc.createElement('h2');
-    title.className = 'kq-panel-heading';
-    title.textContent = 'WORLD MAP';
-    const closeBtn = this._btn(doc, 'CLOSE', 'kq-btn kq-btn-sm kq-btn-primary', () => this._actions.onCloseMap());
-    header.append(title, closeBtn);
-    panel.appendChild(header);
-
-    const progress = view.simState.progress;
-    const visitedSet = new Set(progress.visitedRooms);
-    visitedSet.add(view.simState.roomId);
-    const tpSet = new Set(progress.unlockedTeleporters);
-    const showExits = (progress.upgradeLevels.ViewMapExits ?? 0) > 0;
-    const showSecrets = (progress.upgradeLevels.ViewSecretAreas ?? 0) > 0;
-    const showArenas = (progress.upgradeLevels.ViewMapArenas ?? 0) > 0;
-
-    const allRooms = Array.from(view.catalog.rooms.values());
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-
-    for (const r of allRooms) {
-      minX = Math.min(minX, r.mapX);
-      maxX = Math.max(maxX, r.mapX);
-      minY = Math.min(minY, r.mapY);
-      maxY = Math.max(maxY, r.mapY);
-    }
-    if (!Number.isFinite(minX)) {
-      minX = maxX = minY = maxY = 0;
-    }
-
-    const cols = Math.max(1, maxX - minX + 1);
-
-    const gridWrap = doc.createElement('div');
-    gridWrap.className = 'kq-map-grid-wrap';
-
-    const grid = doc.createElement('div');
-    grid.className = 'kq-map-grid';
-    grid.style.gridTemplateColumns = `repeat(${cols}, minmax(74px, 1fr))`;
-
-    const roomAt = new Map<string, (typeof allRooms)[number]>();
-    for (const r of allRooms) {
-      roomAt.set(`${r.mapX},${r.mapY}`, r);
-    }
-
-    // Y-up map coordinates -> top row is maxY, bottom row is minY
-    for (let gy = maxY; gy >= minY; gy--) {
-      for (let gx = minX; gx <= maxX; gx++) {
-        const room = roomAt.get(`${gx},${gy}`);
-        if (!room) {
-          const spacer = doc.createElement('div');
-          grid.appendChild(spacer);
-          continue;
-        }
-        const visited = visitedSet.has(room.id);
-        const isCurrent = room.id === view.simState.roomId;
-        const canFastTravel = tpSet.has(room.id);
-        const revealed = visited || (room.isSecret && showSecrets) || (room.mode !== 'normal' && showArenas);
-
-        const cell = doc.createElement('button');
-        cell.type = 'button';
-        let cls = 'kq-map-cell';
-        if (isCurrent) cls += ' kq-map-cell-current';
-        if (canFastTravel) cls += ' kq-map-cell-teleporter';
-        if (room.isSecret && showSecrets) cls += ' kq-map-cell-secret';
-        if (!revealed) cls += ' kq-map-cell-unvisited';
-        cell.className = cls;
-        cell.style.backgroundColor = revealed ? BIOME_COLORS[room.biome] ?? '#201239' : '#150d24';
-        cell.disabled = !canFastTravel;
-
-        const nameLine = doc.createElement('div');
-        nameLine.textContent = revealed ? room.name : '???';
-
-        const icons = doc.createElement('div');
-        icons.className = 'kq-map-icons';
-        const tags: string[] = [];
-        if (isCurrent) tags.push('●YOU');
-        if (canFastTravel) tags.push('⚡TP');
-        if (showArenas && room.mode === 'boss') tags.push('☠BOSS');
-        else if (showArenas && room.mode === 'arena') tags.push('⚔ARENA');
-        if (showSecrets && room.isSecret) tags.push('?SEC');
-        if (showExits && revealed && room.exits.length > 0) {
-          const dirs = room.exits
-            .map((e) => (e.dir === 'left' ? '←' : e.dir === 'right' ? '→' : e.dir === 'up' ? '↑' : e.dir === 'down' ? '↓' : '◈'))
-            .join('');
-          tags.push(dirs);
-        }
-        icons.textContent = tags.join(' ');
-
-        cell.append(nameLine, icons);
-        if (canFastTravel) {
-          cell.title = `Fast travel to ${room.name}`;
-          cell.addEventListener('click', () => {
-            this._actions.onFastTravel(room.id);
-          });
-        }
-
-        grid.appendChild(cell);
-      }
-    }
-
-    gridWrap.appendChild(grid);
-    panel.appendChild(gridWrap);
-
-    // Quick Fast-Travel Teleporter buttons
-    const unlockedTps = progress.unlockedTeleporters.filter((id) => view.catalog.rooms.has(id));
-    if (unlockedTps.length > 0) {
-      const tpSec = this._section(doc, 'Unlocked Teleporters — Click to Fast Travel');
-      const tpRow = doc.createElement('div');
-      tpRow.className = 'kq-pack-row';
-      for (const roomId of unlockedTps) {
-        const r = view.catalog.rooms.get(roomId);
-        if (!r) continue;
-        tpRow.appendChild(
-          this._btn(
-            doc,
-            `⚡ ${r.name}`,
-            roomId === view.simState.roomId ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm kq-btn-accent',
-            () => {
-              this._actions.onFastTravel(roomId);
-            },
-          ),
-        );
-      }
-      tpSec.appendChild(tpRow);
-      panel.appendChild(tpSec);
-    }
-
-    const legend = doc.createElement('div');
-    legend.className = 'kq-map-legend';
-    legend.textContent = `● Current Room  |  ⚡ Teleporter (${unlockedTps.length} unlocked)  |  Explored: ${visitedSet.size}/${allRooms.length}`;
-    panel.appendChild(legend);
-
-    return panel;
-  }
-
-  private _buildVictoryPanel(doc: Document, view: OverlayViewState): HTMLElement {
-    const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-title';
-
-    const h2 = doc.createElement('h2');
-    h2.className = 'kq-logo';
-    h2.textContent = 'VICTORY!';
-    panel.appendChild(h2);
-
-    const sub = doc.createElement('div');
-    sub.className = 'kq-subtitle';
-    sub.textContent =
-      view.simState.mode === 'time_attack'
-        ? 'TIME ATTACK COMPLETE'
-        : view.simState.mode === 'boss_rush'
-          ? 'GUARDIAN VANQUISHED'
-          : 'QUEST TRIUMPHANT';
-    panel.appendChild(sub);
-
-    const stats = doc.createElement('div');
-    stats.className = 'kq-stat-grid';
-    const timeTicks = view.simState.mode === 'time_attack' ? view.simState.timeAttackTicks : view.simState.tick;
-    stats.append(
-      this._statItem(doc, 'Clear Time', formatTicksAsTime(timeTicks)),
-      this._statItem(doc, 'Crystals', String(view.simState.progress.crystals)),
-      this._statItem(
-        doc,
-        'Coins',
-        `${view.simState.progress.collectedCoinIds.length} / ${view.catalog.totalCoins}`,
-      ),
-      this._statItem(
-        doc,
-        'Bosses',
-        `${view.simState.progress.defeatedBosses.length} / ${view.catalog.bosses.size}`,
-      ),
-    );
-    panel.appendChild(stats);
-
-    const list = doc.createElement('div');
-    list.className = 'kq-menu-list';
-    list.appendChild(this._btn(doc, 'VIEW CREDITS', 'kq-btn kq-btn-primary', () => this._actions.onOpenCredits()));
-    list.appendChild(this._btn(doc, 'CONTINUE EXPLORING', 'kq-btn', () => this._actions.onReturnToHub()));
-    list.appendChild(this._btn(doc, 'RETURN TO TITLE', 'kq-btn', () => this._actions.onReturnToTitle()));
-    panel.appendChild(list);
-
-    return panel;
-  }
-
-  private _buildGameOverPanel(doc: Document, view: OverlayViewState): HTMLElement {
-    const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-title';
-
-    const h2 = doc.createElement('h2');
-    h2.className = 'kq-panel-heading';
-    h2.style.fontSize = '28px';
-    h2.style.color = '#ff5468';
-    h2.textContent = 'DEFEATED';
-    panel.appendChild(h2);
-
-    const stats = doc.createElement('div');
-    stats.className = 'kq-stat-grid';
-    if (view.simState.mode === 'ghost_ship') {
-      stats.append(
-        this._statItem(doc, 'Wave Reached', String(view.simState.ghostShip.wave)),
-        this._statItem(doc, 'Score', String(view.simState.ghostShip.score)),
-        this._statItem(doc, 'Best Wave', String(view.simState.progress.ghostShipBestWave)),
-        this._statItem(doc, 'Crystals', String(view.simState.progress.crystals)),
-      );
-    } else {
-      stats.append(
-        this._statItem(doc, 'Room', view.catalog.rooms.get(view.simState.roomId)?.name ?? view.simState.roomId),
-        this._statItem(doc, 'Crystals', String(view.simState.progress.crystals)),
-      );
-    }
-    panel.appendChild(stats);
-
-    const list = doc.createElement('div');
-    list.className = 'kq-menu-list';
-    list.appendChild(this._btn(doc, 'RETRY / RESPAWN', 'kq-btn kq-btn-primary', () => this._actions.onRetryGameOver()));
-    list.appendChild(this._btn(doc, 'RETURN TO HUB', 'kq-btn', () => this._actions.onReturnToHub()));
-    list.appendChild(this._btn(doc, 'TITLE SCREEN', 'kq-btn kq-btn-danger', () => this._actions.onReturnToTitle()));
-    panel.appendChild(list);
-
-    return panel;
-  }
-
-  private _buildCreditsPanel(doc: Document, view: OverlayViewState): HTMLElement {
-    const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-title';
-
-    const h2 = doc.createElement('h2');
-    h2.className = 'kq-logo';
-    h2.textContent = 'KRUNKED QUEST';
-    panel.appendChild(h2);
-
-    const sec = this._section(doc, 'Credits');
-    const lines = [
-      'Engine & 60Hz Deterministic Simulation — Krunked Quest Team',
-      '16-Bit Pixel Craft & Procedural Synth — Krunked Quest Studio',
-      'Multi-Device Controls — Keyboard, Gamepad & Auto-Touch',
-      'Thank you for playing Krunked Quest!',
-    ];
-    for (const line of lines) {
-      const p = doc.createElement('div');
-      p.className = 'kq-card-desc';
-      p.style.textAlign = 'center';
-      p.textContent = line;
-      sec.appendChild(p);
-    }
-    panel.appendChild(sec);
-
-    const footer = doc.createElement('div');
-    footer.className = 'kq-footer-hint';
-    footer.textContent = `TOTAL COINS: ${view.simState.progress.collectedCoinIds.length}/${view.catalog.totalCoins} · FORMS: ${view.simState.progress.unlockedForms.length}/${HERO_FORMS.length}`;
-    panel.appendChild(footer);
-
-    panel.appendChild(this._btn(doc, 'RETURN TO TITLE', 'kq-btn kq-btn-primary', () => this._actions.onReturnToTitle()));
     return panel;
   }
 
@@ -1394,6 +860,7 @@ export class OverlayManager {
         this._drawerEl.remove();
         this._drawerEl = null;
         this._drawerStatsEl = null;
+        this._deviceQaBtns.clear();
       }
       return;
     }
@@ -1404,6 +871,7 @@ export class OverlayManager {
       this._drawerEl.remove();
       this._drawerEl = null;
       this._drawerStatsEl = null;
+      this._deviceQaBtns.clear();
     }
 
     const drawer = doc.createElement('aside');
@@ -1423,6 +891,99 @@ export class OverlayManager {
     this._drawerStatsEl = stats;
     drawer.appendChild(stats);
     this._updateDrawerTelemetry(view);
+
+    // Compact DEVICE QA Row calling window.__KRUNKED_DEBUG__
+    const qaBox = doc.createElement('div');
+    qaBox.className = 'kq-drawer-qa';
+
+    const qaHead = doc.createElement('div');
+    qaHead.className = 'kq-drawer-qa-head';
+    const qaTitle = doc.createElement('span');
+    qaTitle.textContent = 'DEVICE QA';
+    const clearPadBtn = this._btn(doc, 'CLR PAD', 'kq-btn kq-btn-xs', () => {
+      const dbg = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__ : undefined;
+      dbg?.injectGamepad(null);
+      if (this._lastView) {
+        this._updateDrawerTelemetry(this._lastView);
+        this._syncDeviceQaButtons(this._lastView);
+      }
+    });
+    clearPadBtn.setAttribute('data-qa-device', 'clear_gamepad');
+    clearPadBtn.title = 'Clear virtual gamepad override';
+    qaHead.append(qaTitle, clearPadBtn);
+    qaBox.appendChild(qaHead);
+
+    const qaGrid = doc.createElement('div');
+    qaGrid.className = 'kq-drawer-qa-grid';
+
+    const qaDefs: ReadonlyArray<{
+      id: string;
+      label: string;
+      device: InputDeviceMode;
+      onClick: () => void;
+    }> = [
+      {
+        id: 'touch',
+        label: 'SIM TOUCH',
+        device: 'touch',
+        onClick: () => {
+          const dbg = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__ : undefined;
+          if (!dbg) return;
+          dbg.injectGamepad(null);
+          dbg.simulateTouchEvent();
+        },
+      },
+      {
+        id: 'keyboard',
+        label: 'SIM KEY',
+        device: 'keyboard',
+        onClick: () => {
+          const dbg = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__ : undefined;
+          if (!dbg) return;
+          dbg.injectGamepad(null);
+          dbg.simulateKeyEvent('ArrowRight');
+        },
+      },
+      {
+        id: 'xbox',
+        label: 'SIM XBOX',
+        device: 'gamepad_xbox',
+        onClick: () => {
+          const dbg = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__ : undefined;
+          if (!dbg) return;
+          dbg.injectGamepad(makeVirtualXboxSnapshot(true));
+          dbg.injectGamepad(makeVirtualXboxSnapshot(false));
+        },
+      },
+      {
+        id: 'tesla',
+        label: 'SIM TESLA',
+        device: 'gamepad_tesla',
+        onClick: () => {
+          const dbg = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__ : undefined;
+          if (!dbg) return;
+          dbg.injectGamepad(makeVirtualTeslaSnapshot(true));
+          dbg.injectGamepad(makeVirtualTeslaSnapshot(false));
+        },
+      },
+    ];
+
+    for (const qd of qaDefs) {
+      const btn = this._btn(doc, qd.label, 'kq-btn kq-btn-xs', () => {
+        qd.onClick();
+        if (this._lastView) {
+          this._updateDrawerTelemetry(this._lastView);
+          this._syncDeviceQaButtons(this._lastView);
+        }
+      });
+      btn.setAttribute('data-qa-device', qd.id);
+      this._deviceQaBtns.set(qd.device, btn);
+      qaGrid.appendChild(btn);
+    }
+
+    qaBox.appendChild(qaGrid);
+    drawer.appendChild(qaBox);
+    this._syncDeviceQaButtons(view);
 
     // Room Warp Selector
     const warpRow = doc.createElement('div');
@@ -1467,7 +1028,9 @@ export class OverlayManager {
     actionsGrid.appendChild(this._btn(doc, 'UNLOCK FORMS', 'kq-btn kq-btn-sm', () => this._actions.onUnlockAllForms()));
     actionsGrid.appendChild(this._btn(doc, '+5000 ◆', 'kq-btn kq-btn-sm', () => this._actions.onGrantCrystals(5000)));
     actionsGrid.appendChild(this._btn(doc, 'HEAL FULL', 'kq-btn kq-btn-sm', () => this._actions.onHealFull()));
-    actionsGrid.appendChild(this._btn(doc, 'KILL ENEMIES', 'kq-btn kq-btn-sm kq-btn-danger', () => this._actions.onKillRoomEnemies()));
+    actionsGrid.appendChild(
+      this._btn(doc, 'KILL ENEMIES', 'kq-btn kq-btn-sm kq-btn-danger', () => this._actions.onKillRoomEnemies()),
+    );
     drawer.appendChild(actionsGrid);
 
     // Boss Launcher
@@ -1533,6 +1096,14 @@ export class OverlayManager {
     this._drawerEl = drawer;
   }
 
+  private _syncDeviceQaButtons(view: OverlayViewState): void {
+    const dbgState = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__?.getDeviceState() : undefined;
+    const activeDev = dbgState?.activeDevice ?? view.activeDevice;
+    for (const [dev, btn] of this._deviceQaBtns.entries()) {
+      btn.className = dev === activeDev ? 'kq-btn kq-btn-xs kq-btn-active' : 'kq-btn kq-btn-xs';
+    }
+  }
+
   private _updateDrawerTelemetry(view: OverlayViewState): void {
     if (!this._drawerStatsEl) return;
     const s = view.simState;
@@ -1540,13 +1111,17 @@ export class OverlayManager {
     const doc = this._root.ownerDocument;
     if (!doc) return;
 
+    const dbgState = typeof window !== 'undefined' ? window.__KRUNKED_DEBUG__?.getDeviceState() : undefined;
+    const activeDev = dbgState?.activeDevice ?? view.activeDevice;
+    const touchVis = dbgState?.touchOverlayVisible ?? view.touchOverlayVisible;
+
     const entries: Array<[string, string]> = [
       ['ROOM', s.roomId],
       ['FPS', `${Math.round(view.measuredFps)}/${view.settings.render.fpsLimit}`],
       ['HP', `${s.hero.hp}/${s.hero.maxHp}`],
       ['FORM', FORM_SHORT_LABELS[s.hero.form]],
       ['◆', String(s.progress.crystals)],
-      ['DEV', `${deviceLabel(view.activeDevice)} (${view.touchOverlayVisible ? 'T:ON' : 'T:OFF'})`],
+      ['DEV', `${deviceLabel(activeDev)} (${touchVis ? 'T:ON' : 'T:OFF'})`],
     ];
     for (const [k, v] of entries) {
       const cell = doc.createElement('div');
@@ -1627,18 +1202,5 @@ export class OverlayManager {
     wrap.append(input, valSpan);
     row.appendChild(wrap);
     return row;
-  }
-
-  private _statItem(doc: Document, label: string, value: string): HTMLElement {
-    const box = doc.createElement('div');
-    box.className = 'kq-stat-item';
-    const l = doc.createElement('span');
-    l.className = 'kq-stat-label';
-    l.textContent = label;
-    const v = doc.createElement('span');
-    v.className = 'kq-stat-value';
-    v.textContent = value;
-    box.append(l, v);
-    return box;
   }
 }
