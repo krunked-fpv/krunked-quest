@@ -13,11 +13,37 @@ import { ENEMY_ARCHETYPES_BY_ID } from '../enemies';
 import { HERO_FORM_DEFS, HERO_FORMS_BY_ID } from '../forms';
 import { RELICS, RELICS_BY_ID } from '../relics';
 import { UPGRADES, UPGRADES_BY_KEY } from '../upgrades';
-import { WAVE1_ROOM_ORDER, WAVE1_ROOMS } from './slice';
+import { AP_ROOMS } from './regions/ap';
+import { ATVC_ROOMS } from './regions/atvc';
+import { DSI_ROOMS } from './regions/dsi';
+import { EVIL_ROOMS } from './regions/evil';
+import { FLIN_ROOMS } from './regions/flin';
+import { GSHIP_ROOMS } from './regions/gship';
+import { HUB_ROOMS } from './regions/hub';
+import { LAB_ROOMS } from './regions/lab';
+import { MLAIR_ROOMS } from './regions/mlair';
+import { TDM_ROOMS } from './regions/tdm';
+import { TEMP_ROOMS } from './regions/temp';
 
 export { CHAR_TO_TILE, TILE_TO_CHAR, getTileAt, isSolidTile, parseRoomGrid } from './parseGrid';
 export type { ParsedRoomGrid } from './parseGrid';
 export { WAVE1_ROOM_ORDER, WAVE1_ROOMS } from './slice';
+
+export const WORLD_ROOMS: readonly RoomDef[] = [
+  ...MLAIR_ROOMS,
+  ...HUB_ROOMS,
+  ...TDM_ROOMS,
+  ...FLIN_ROOMS,
+  ...AP_ROOMS,
+  ...ATVC_ROOMS,
+  ...DSI_ROOMS,
+  ...LAB_ROOMS,
+  ...TEMP_ROOMS,
+  ...EVIL_ROOMS,
+  ...GSHIP_ROOMS,
+] as const;
+
+export const WORLD_ROOM_ORDER: readonly string[] = WORLD_ROOMS.map((room) => room.id);
 
 export const START_ROOM_ID = 'mlair_01';
 export const HUB_ROOM_ID = 'hub_haven';
@@ -27,7 +53,7 @@ export function createWorldCatalog(): IWorldCatalog {
   const rooms = new Map<string, RoomDef>();
   const coinIds = new Set<string>();
 
-  for (const room of WAVE1_ROOMS) {
+  for (const room of WORLD_ROOMS) {
     rooms.set(room.id, room);
     for (const coin of room.coins) {
       coinIds.add(coin.id);
@@ -39,7 +65,7 @@ export function createWorldCatalog(): IWorldCatalog {
     hubRoomId: HUB_ROOM_ID,
     ghostShipRoomId: GHOST_SHIP_ROOM_ID,
     rooms,
-    roomOrder: WAVE1_ROOM_ORDER,
+    roomOrder: WORLD_ROOM_ORDER,
     upgrades: UPGRADES,
     relics: RELICS,
     forms: HERO_FORM_DEFS,
