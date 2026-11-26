@@ -244,7 +244,11 @@ export class PixelFont {
     const adv = GLYPH_ADVANCE * scale;
 
     for (let i = 0; i < text.length; i++) {
-      const rawCh = text.charAt(i);
+      let rawCh = text.charAt(i);
+      if (rawCh === '—' || rawCh === '–') rawCh = '-';
+      else if (rawCh === '’' || rawCh === '‘') rawCh = "'";
+      else if (rawCh === '“' || rawCh === '”') rawCh = '"';
+      else if (rawCh === '·' || rawCh === '•') rawCh = '.';
       const upper = rawCh >= 'a' && rawCh <= 'z' ? rawCh.toUpperCase() : rawCh;
       const idx = CHAR_INDEX.get(upper);
       if (idx !== undefined && upper !== ' ') {

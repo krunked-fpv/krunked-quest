@@ -420,10 +420,10 @@ export class TileRenderer {
         }
         // Crisp NPC floating name + interact speech pill when near hero
         const isActive = state.activeShopPrompt === shopId;
-        const name = prop.label ?? NPC_DISPLAY_NAMES[shopId];
+        const shortName = NPC_DISPLAY_NAMES[shopId];
         if (isActive) {
           const bob = Math.round(Math.sin(timeSec * 6) * 2);
-          const pillText = `[${glyphs.interact}] ${name}`;
+          const pillText = `[${glyphs.interact}] ${prop.label ?? shortName}`;
           const tw = font.measure(pillText, 1);
           const px = Math.round(sx - tw * 0.5 - 5);
           const py = syBase - 55 + bob;
@@ -435,7 +435,7 @@ export class TileRenderer {
           ctx.fillRect(px + 1, py + 1, tw + 8, 9);
           font.draw(ctx, pillText, sx, py + 2, 'gold', 1, 'center', false);
         } else {
-          font.draw(ctx, name, sx, syBase - 49, 'cream', 1, 'center', true);
+          font.draw(ctx, shortName, sx, syBase - 49, 'cream', 1, 'center', true);
         }
         break;
       }

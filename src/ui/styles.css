@@ -597,7 +597,7 @@ body {
   max-height: calc(100dvh - 16px);
   overflow-y: auto;
   pointer-events: auto;
-  z-index: 40;
+  z-index: 100;
   background: rgba(14, 8, 26, 0.95);
   border: 2px solid var(--kq-accent);
   box-shadow: 0 4px 0 #090410, 0 12px 28px rgba(0, 0, 0, 0.72);

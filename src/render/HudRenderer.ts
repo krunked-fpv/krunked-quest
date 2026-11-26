@@ -199,7 +199,12 @@ export class HudRenderer {
       this.renderComboBanner(ctx, state.combo.bannerText || 'KRUNKED COMBO!', font, timeSec);
     }
 
-    if (this.roomToastTimer > 0 && screenMode === 'playing' && state.combo.bannerTimer <= 0) {
+    if (
+      this.roomToastTimer > 0 &&
+      screenMode === 'playing' &&
+      state.combo.bannerTimer <= 0 &&
+      (!state.boss || state.boss.defeated)
+    ) {
       this.renderRoomToast(ctx, font);
     }
 
@@ -531,16 +536,22 @@ export class HudRenderer {
   }
 
   private renderRoomToast(ctx: CanvasRenderingContext2D, font: PixelFont): void {
-    const ty = 12;
-    const tw = Math.max(font.measure(this.roomToastText, 1), font.measure(this.roomToastBiome, 1));
+    const ty = 4;
+    const showSub = this.roomToastBiome.length > 0 && this.roomToastBiome !== this.roomToastText;
+    const tw = showSub
+      ? Math.max(font.measure(this.roomToastText, 1), font.measure(this.roomToastBiome, 1))
+      : font.measure(this.roomToastText, 1);
+    const boxH = showSub ? 20 : 12;
     const px = Math.round((VIEWPORT_W - tw) * 0.5 - 8);
     ctx.fillStyle = 'rgba(22, 12, 36, 0.85)';
-    ctx.fillRect(px, ty - 2, tw + 16, 20);
+    ctx.fillRect(px, ty - 2, tw + 16, boxH);
     ctx.fillStyle = UI_COLORS.frameLight;
     ctx.fillRect(px, ty - 2, tw + 16, 1);
-    ctx.fillRect(px, ty + 17, tw + 16, 1);
+    ctx.fillRect(px, ty - 2 + boxH - 1, tw + 16, 1);
     font.draw(ctx, this.roomToastText, VIEWPORT_W * 0.5, ty + 1, 'gold', 1, 'center', true);
-    font.draw(ctx, this.roomToastBiome, VIEWPORT_W * 0.5, ty + 10, 'dim', 1, 'center', false);
+    if (showSub) {
+      font.draw(ctx, this.roomToastBiome, VIEWPORT_W * 0.5, ty + 10, 'dim', 1, 'center', false);
+    }
   }
 
   private renderInteractPrompt(
