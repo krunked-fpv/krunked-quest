@@ -14,7 +14,6 @@ import {
   type DeviceGlyphMap,
   type IWorldCatalog,
   type ScreenMode,
-  type ShopId,
   type SimState,
 } from '../contracts/index.js';
 import {
@@ -42,15 +41,6 @@ for (let i = 0; i < COMBO_SEGS; i++) {
   COMBO_COS[i] = Math.cos(ang);
   COMBO_SIN[i] = Math.sin(ang);
 }
-
-const SHOP_PROMPT_LABELS: Readonly<Record<ShopId, string>> = {
-  vespera: 'VESPERA',
-  orla: 'ORLA',
-  barnaby: 'BARNABY',
-  garron: 'GARRON',
-  barnacle: 'CAPT. BARNACLE',
-  codex: 'CODEX',
-};
 
 export class HudRenderer {
   private bossTrailRatio = 1;
@@ -208,12 +198,8 @@ export class HudRenderer {
       this.renderRoomToast(ctx, font);
     }
 
-    if (screenMode === 'playing') {
-      if (state.activeSignText) {
-        this.renderSignBanner(ctx, state.activeSignText, font);
-      } else if (state.activeShopPrompt) {
-        this.renderInteractPrompt(ctx, state.activeShopPrompt, glyphs, font, timeSec);
-      }
+    if (screenMode === 'playing' && state.activeSignText) {
+      this.renderSignBanner(ctx, state.activeSignText, font);
     }
   }
 
@@ -552,26 +538,6 @@ export class HudRenderer {
     if (showSub) {
       font.draw(ctx, this.roomToastBiome, VIEWPORT_W * 0.5, ty + 10, 'dim', 1, 'center', false);
     }
-  }
-
-  private renderInteractPrompt(
-    ctx: CanvasRenderingContext2D,
-    shopId: ShopId,
-    glyphs: DeviceGlyphMap,
-    font: PixelFont,
-    timeSec: number,
-  ): void {
-    const label = `[${glyphs.interact}] TALK TO ${SHOP_PROMPT_LABELS[shopId]}`;
-    const tw = font.measure(label, 1);
-    const px = Math.round((VIEWPORT_W - tw) * 0.5 - 8);
-    const py = VIEWPORT_H - 28 + Math.round(Math.sin(timeSec * 6) * 1.5);
-    ctx.fillStyle = OUTLINE_DARK;
-    ctx.fillRect(px - 1, py - 1, tw + 18, 15);
-    ctx.fillStyle = UI_COLORS.frameGold;
-    ctx.fillRect(px, py, tw + 16, 13);
-    ctx.fillStyle = UI_COLORS.panelBg;
-    ctx.fillRect(px + 1, py + 1, tw + 14, 11);
-    font.draw(ctx, label, VIEWPORT_W * 0.5, py + 3, 'gold', 1, 'center', false);
   }
 
   private renderSignBanner(

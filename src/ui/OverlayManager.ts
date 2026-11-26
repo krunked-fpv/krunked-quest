@@ -385,6 +385,10 @@ export class OverlayManager {
     }
 
     if (view.screenMode === 'playing') {
+      const activeEl = doc.activeElement as HTMLElement | null;
+      if (activeEl && activeEl !== doc.body && typeof activeEl.blur === 'function') {
+        activeEl.blur();
+      }
       return;
     }
 

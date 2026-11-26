@@ -423,7 +423,8 @@ export class TileRenderer {
         const shortName = NPC_DISPLAY_NAMES[shopId];
         if (isActive) {
           const bob = Math.round(Math.sin(timeSec * 6) * 2);
-          const pillText = `[${glyphs.interact}] ${prop.label ?? shortName}`;
+          const keyBadge = glyphs.interact.startsWith('[') ? glyphs.interact : `[${glyphs.interact}]`;
+          const pillText = `${keyBadge} ${prop.label ?? shortName}`;
           const tw = font.measure(pillText, 1);
           const px = Math.round(sx - tw * 0.5 - 5);
           const py = syBase - 55 + bob;
