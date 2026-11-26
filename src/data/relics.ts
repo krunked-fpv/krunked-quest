@@ -1,0 +1,120 @@
+import type { RelicDef, RelicId } from '../contracts/index';
+
+export const RELICS: readonly RelicDef[] = [
+  {
+    id: 'providential_shield',
+    name: 'Providential Shield',
+    description: 'Blocks the first hit taken in every room with a shimmering barrier.',
+    price: 1400,
+    iconColor: '#56d8ff',
+  },
+  {
+    id: 'crystal_abundance',
+    name: 'Crystal Abundance',
+    description: 'Increases crystal payouts from defeated enemies and shattered blocks.',
+    price: 2100,
+    iconColor: '#ff48d8',
+  },
+  {
+    id: 'maniac_crystal',
+    name: 'Maniac Crystal',
+    description: 'Amplifies combo meter gain by 1.5x and freezes decay briefly on hits.',
+    price: 3000,
+    iconColor: '#d42aff',
+  },
+  {
+    id: 'old_clock',
+    name: 'Old Clock',
+    description: 'Triggers a crisp slow-motion focus after enemy bounces for precision chains.',
+    price: 1400,
+    iconColor: '#f0c050',
+  },
+  {
+    id: 'evil_ring',
+    name: 'Evil Ring',
+    description: 'Unleashes a dark retaliation shockwave around Krunk when taking damage.',
+    price: 3500,
+    iconColor: '#ff2b55',
+  },
+  {
+    id: 'magnet',
+    name: 'Crystal Magnet',
+    description: 'Draws nearby crystals swiftly toward Krunk across a wide pickup field.',
+    price: 3500,
+    iconColor: '#4090ff',
+  },
+  {
+    id: 'lively_heart',
+    name: 'Lively Heart',
+    description: 'Bolsters combo-heal vigor and invigorates Krunk on arena clears.',
+    price: 3000,
+    iconColor: '#ff5470',
+  },
+  {
+    id: 'rebirth_amulet',
+    name: 'Rebirth Amulet',
+    description: 'Revives Krunk once upon fatal damage with protective invulnerability.',
+    price: 1400,
+    iconColor: '#ff9e2c',
+  },
+  {
+    id: 'platinum_medal',
+    name: 'Platinum Medal',
+    description: 'Bestows a gleaming ward and bonus prestige for flawless combo streaks.',
+    price: 2100,
+    iconColor: '#dce8f5',
+  },
+  {
+    id: 'bandit_shorts',
+    name: 'Bandit Shorts',
+    description: 'Grants a nimble 35% chance to sidestep incoming damage completely.',
+    price: 3500,
+    iconColor: '#3ad46a',
+  },
+  {
+    id: 'turtle_shell',
+    name: 'Turtle Shell',
+    description: 'Fortifies Krunk\'s shell to 5 maximum Heart Orbs (+3 vitality override).',
+    price: 3000,
+    iconColor: '#52a840',
+  },
+  {
+    id: 'extra_coin',
+    name: 'Gilded Crest',
+    description: 'Grants extra crystal bounties when collecting coins and clearing rooms.',
+    price: 2100,
+    iconColor: '#ffd700',
+  },
+  {
+    id: 'magic_feather',
+    name: 'Magic Feather',
+    description: 'Boosts stomp bounce height by 1.2x for soaring aerial combo chains.',
+    price: 5000,
+    iconColor: '#a8f0ff',
+  },
+  {
+    id: 'vampiric_amulet',
+    name: 'Vampiric Amulet',
+    description: 'Restores +1 Heart Orb whenever you complete a full-room Krunked Combo.',
+    price: 5000,
+    iconColor: '#c81448',
+  },
+  {
+    id: 'magic_shield',
+    name: 'Magic Shield',
+    description: 'Weaves a 3.0s arcane barrier after taking a hit to prevent follow-up damage.',
+    price: 1750,
+    iconColor: '#8060ff',
+  },
+  {
+    id: 'magic_coin',
+    name: 'Magic Coin',
+    description: 'Safeguards your crystal pouch, negating the 5% crystal loss upon defeat.',
+    price: 2100,
+    iconColor: '#ffe26a',
+  },
+] as const;
+
+export const RELICS_BY_ID: ReadonlyMap<RelicId, RelicDef> = new Map(
+  RELICS.map((relic) => [relic.id, relic]),
+);
