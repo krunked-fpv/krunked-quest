@@ -20,6 +20,8 @@ import {
 } from '../contracts/index.js';
 import { BIOME_PALETTES, OUTLINE_VOID } from '../assets/palettes.js';
 import { ProceduralPixelAtlas } from '../assets/ProceduralPixelAtlas.js';
+import { BiomeRenderer } from './BiomeRenderer.js';
+import { BossRenderer } from './BossRenderer.js';
 import { EntityRenderer } from './EntityRenderer.js';
 import { HudRenderer } from './HudRenderer.js';
 import { ParticleSystem } from './Particles.js';
@@ -34,6 +36,8 @@ export class PixelRenderer implements IPixelRenderer {
   private readonly atlas = new ProceduralPixelAtlas();
   private readonly font = new PixelFont();
   private readonly particles = new ParticleSystem();
+  private readonly biomeRenderer = new BiomeRenderer();
+  private readonly bossRenderer = new BossRenderer();
   private readonly tileRenderer = new TileRenderer();
   private readonly entityRenderer = new EntityRenderer();
   private readonly hudRenderer = new HudRenderer();
@@ -67,6 +71,9 @@ export class PixelRenderer implements IPixelRenderer {
         this.pendingFormSwitch = true;
       } else if (ev.type === 'room_change') {
         this.particles.clear();
+        this.bossRenderer.resetTrails();
+      } else if (ev.type === 'boss_defeated') {
+        this.bossRenderer.resetTrails();
       }
     }
   }
@@ -176,8 +183,9 @@ export class PixelRenderer implements IPixelRenderer {
         ? this.packManager
         : null;
 
-    // 1. 3-Layer atmospheric pixel parallax backdrop
+    // 1. 3-Layer atmospheric pixel parallax backdrop + bespoke biome midground effects
     this.tileRenderer.renderParallax(ctx, state.biome, camX, camY, timeSec, this.atlas);
+    this.biomeRenderer.renderMidground(ctx, state, room, camX, camY, timeSec);
 
     // 2. World pass (with optional crisp arena zoom centered on viewport)
     const zoom = state.camera.zoom;
@@ -204,13 +212,44 @@ export class PixelRenderer implements IPixelRenderer {
       this.font,
       glyphs,
     );
-    this.entityRenderer.renderAll(ctx, state, camX, camY, alpha, timeSec, this.atlas, activePack);
+
+    // Bespoke multi-part BossRenderer replaces generic boss draw cleanly (ZERO double-sprite ghosting!)
+    const activeBoss = state.boss && !state.boss.defeated ? state.boss : null;
+    if (activeBoss) {
+      this.bossRenderer.renderBack(ctx, state, activeBoss, room, camX, camY, alpha, timeSec);
+      this.bossRenderer.renderBody(
+        ctx,
+        state,
+        activeBoss,
+        camX,
+        camY,
+        alpha,
+        timeSec,
+        this.atlas,
+        activePack,
+      );
+      state.boss = null;
+    }
+    try {
+      this.entityRenderer.renderAll(ctx, state, camX, camY, alpha, timeSec, this.atlas, activePack);
+    } finally {
+      if (activeBoss) {
+        state.boss = activeBoss;
+      }
+    }
+    if (activeBoss) {
+      this.bossRenderer.renderForeground(ctx, state, activeBoss, camX, camY, alpha, timeSec);
+    }
+
     this.particles.render(ctx, camX, camY, this.font);
 
     if (zoomed) {
       ctx.restore();
       ctx.imageSmoothingEnabled = false;
     }
+
+    // 2.5 Bespoke biome foreground atmospheric pass (sunbeams/spores/embers/sandstorm/swells/hazard pulses)
+    this.biomeRenderer.renderForeground(ctx, state, room, camX, camY, timeSec);
 
     // 3. Brief subtle white flash overlay on max-combo hitstop celebration
     if (state.hitstopTicks > 14 && state.combo.bannerTimer > 0) {
@@ -224,6 +263,7 @@ export class PixelRenderer implements IPixelRenderer {
 
   public dispose(): void {
     this.particles.clear();
+    this.bossRenderer.resetTrails();
     this.ctx = null;
     this.packManager = null;
   }
