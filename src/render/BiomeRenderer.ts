@@ -213,7 +213,7 @@ export class BiomeRenderer {
         this.drawForgeSparks(ctx, pal, camX, camY, timeSec);
         break;
       case 'TEMP':
-        this.drawAntigravScanlines(ctx, pal, camY, timeSec, fgScale);
+        this.drawAntigravScanlines(ctx, pal, camY, timeSec, fgScale, !customBgActive);
         break;
       case 'EVIL':
         this.drawFloatingVioletRunes(ctx, pal, camX, camY, timeSec, fgScale);
@@ -869,25 +869,29 @@ export class BiomeRenderer {
     camY: number,
     timeSec: number,
     alphaScale = 1.0,
+    drawFullWidthBars = true,
   ): void {
-    // 1. Subtle horizontal pulsing cyan antigravity scanlines rising smoothly upward
-    const riseOff = Math.round(wrap(-timeSec * 22 + camY * PPU * 0.2, 16));
-    const pulse = (0.06 + 0.04 * Math.sin(timeSec * 3.8)) * alphaScale;
-    ctx.fillStyle = pal.ambientMote;
-    ctx.globalAlpha = pulse;
-    for (let y = riseOff; y < VIEWPORT_H; y += 16) {
-      ctx.fillRect(0, y, VIEWPORT_W, 1);
-    }
+    if (drawFullWidthBars) {
+      // 1. Subtle horizontal pulsing cyan antigravity scanlines rising smoothly upward (Built-In only)
+      const riseOff = Math.round(wrap(-timeSec * 22 + camY * PPU * 0.2, 16));
+      const pulse = (0.06 + 0.04 * Math.sin(timeSec * 3.8)) * alphaScale;
+      ctx.fillStyle = pal.ambientMote;
+      ctx.globalAlpha = pulse;
+      for (let y = riseOff; y < VIEWPORT_H; y += 16) {
+        ctx.fillRect(0, y, VIEWPORT_W, 1);
+      }
 
-    // 2. Two brighter sweeping antigravity scan wave pulses climbing the screen
-    for (let w = 0; w < 2; w++) {
-      const waveY = Math.round(wrap(VIEWPORT_H - timeSec * 52 + w * (VIEWPORT_H * 0.5), VIEWPORT_H));
-      ctx.globalAlpha = 0.16 * alphaScale;
-      ctx.fillStyle = pal.capMid;
-      ctx.fillRect(0, waveY - 1, VIEWPORT_W, 3);
-      ctx.globalAlpha = 0.28 * alphaScale;
-      ctx.fillStyle = pal.capLight;
-      ctx.fillRect(0, waveY, VIEWPORT_W, 1);
+      // 2. Two brighter sweeping antigravity scan wave pulses climbing the screen (Built-In only;
+      // suppressed in Custom Pack mode so no 1px horizontal line cuts across the origin TEMP sky)
+      for (let w = 0; w < 2; w++) {
+        const waveY = Math.round(wrap(VIEWPORT_H - timeSec * 52 + w * (VIEWPORT_H * 0.5), VIEWPORT_H));
+        ctx.globalAlpha = 0.16 * alphaScale;
+        ctx.fillStyle = pal.capMid;
+        ctx.fillRect(0, waveY - 1, VIEWPORT_W, 3);
+        ctx.globalAlpha = 0.28 * alphaScale;
+        ctx.fillStyle = pal.capLight;
+        ctx.fillRect(0, waveY, VIEWPORT_W, 1);
+      }
     }
 
     // 3. Upward-drifting antigravity pixel chevrons & circuit sparks
@@ -895,7 +899,7 @@ export class BiomeRenderer {
       const spd = SLOT_SPEED[i]!;
       const px = Math.round(SLOT_SEED_X[i]!);
       const py = Math.round(wrap(SLOT_SEED_Y[i]! - timeSec * (24 * spd), VIEWPORT_H));
-      ctx.globalAlpha = 0.52;
+      ctx.globalAlpha = 0.52 * alphaScale;
       ctx.fillStyle = i % 3 === 0 ? pal.accent : pal.capLight;
       // Tiny crisp upward chevron ^
       ctx.fillRect(px, py, 1, 1);
