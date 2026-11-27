@@ -17,6 +17,9 @@ import {
 } from '../contracts/index.js';
 
 export const SETTINGS_STORAGE_KEY = 'krunked_quest_settings_v1';
+export const CUSTOM_PACK_PREF_STORAGE_KEY = 'krunked_quest_custom_pack_pref_v1';
+
+export type CustomPackPreference = 'custom' | 'builtin' | null;
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -303,11 +306,18 @@ export class SaveManager {
   private readonly _storage: StorageLike;
   private readonly _saveKey: string;
   private readonly _settingsKey: string;
+  private readonly _customPackPrefKey: string;
 
-  constructor(storage?: StorageLike, saveKey = SAVE_STORAGE_KEY, settingsKey = SETTINGS_STORAGE_KEY) {
+  constructor(
+    storage?: StorageLike,
+    saveKey = SAVE_STORAGE_KEY,
+    settingsKey = SETTINGS_STORAGE_KEY,
+    customPackPrefKey = CUSTOM_PACK_PREF_STORAGE_KEY,
+  ) {
     this._storage = storage ?? resolveDefaultStorage();
     this._saveKey = saveKey;
     this._settingsKey = settingsKey;
+    this._customPackPrefKey = customPackPrefKey;
   }
 
   hasSave(): boolean {
@@ -369,6 +379,35 @@ export class SaveManager {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  getCustomPackPreference(): CustomPackPreference {
+    try {
+      const raw = this._storage.getItem(this._customPackPrefKey);
+      if (raw === 'custom' || raw === 'builtin') {
+        return raw;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  setCustomPackPreference(pref: 'custom' | 'builtin'): boolean {
+    try {
+      this._storage.setItem(this._customPackPrefKey, pref);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  clearCustomPackPreference(): void {
+    try {
+      this._storage.removeItem(this._customPackPrefKey);
+    } catch {
+      // Ignore storage errors
     }
   }
 }

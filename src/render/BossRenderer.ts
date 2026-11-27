@@ -24,6 +24,12 @@ import {
   UI_COLORS,
 } from '../assets/palettes.js';
 import type { ProceduralPixelAtlas } from '../assets/ProceduralPixelAtlas.js';
+import {
+  drawSpriteRect,
+  isDrawable,
+  resolveCustomFrame,
+  type SpriteSliceOut,
+} from './EntityRenderer.js';
 
 const HALF_W = VIEWPORT_W * 0.5; // 288
 const HALF_H = VIEWPORT_H * 0.5; // 162
@@ -116,15 +122,14 @@ const SOV_GOLD = '#ffe838';
 const SOV_RIFT = '#24ff78';
 const SOV_SHIELD = '#59f2ff';
 
-function isDrawable(
-  img: HTMLCanvasElement | HTMLImageElement | null | undefined,
-): img is HTMLCanvasElement | HTMLImageElement {
-  if (!img) return false;
-  if (typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement) {
-    return img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
-  }
-  return img.width > 0 && img.height > 0;
-}
+// Pre-allocated boss animation clip fallback lists (ZERO per-frame allocations!)
+const BOSS_CLIPS_LASER: readonly string[] = ['attack', 'telegraph', 'idle'];
+const BOSS_CLIPS_CHARGE: readonly string[] = ['dash', 'move', 'attack', 'idle'];
+const BOSS_CLIPS_SLAM: readonly string[] = ['stomp', 'jump', 'attack', 'idle'];
+const BOSS_CLIPS_TELEGRAPH: readonly string[] = ['telegraph', 'attack', 'idle'];
+const BOSS_CLIPS_STUNNED: readonly string[] = ['stunned', 'idle'];
+const BOSS_CLIPS_MOVE: readonly string[] = ['move', 'idle'];
+const BOSS_CLIPS_IDLE: readonly string[] = ['idle', 'move'];
 
 function isTelegraphState(st: string): boolean {
   return (
@@ -175,6 +180,16 @@ export class BossRenderer {
   private lastSampleTime = -1;
   private lastBossX = 0;
   private lastBossY = 0;
+  private readonly slice: SpriteSliceOut = {
+    sx: 0,
+    sy: 0,
+    sw: 64,
+    sh: 64,
+    pivotX: 0.5,
+    pivotY: 1.0,
+    hasManifestRect: false,
+    matchedClip: false,
+  };
 
   public resetTrails(): void {
     this.trailTime.fill(-99);
@@ -300,21 +315,178 @@ export class BossRenderer {
     const flash = boss.hitFlashTimer > 0;
     const prevAlpha = ctx.globalAlpha;
 
-    // Optional Custom Pack sprite override (keeps dynamic telegraphs/lasers/shields/stun stars intact!)
-    const customBoss = customPack ? customPack.getSprite(`boss_${boss.id}`) : null;
-    if (!flash && isDrawable(customBoss)) {
-      const bw = Math.round(boss.width * PPU);
-      const bh = Math.round(boss.height * PPU);
-      const hover = Math.round(Math.sin(timeSec * 3.4) * 3);
-      ctx.save();
-      ctx.translate(cx, cy + hover);
-      if (boss.facing < 0 && boss.id !== 'primal_eye') {
-        ctx.scale(-1, 1);
+    // Custom Pack sprite rendering using packed multi-clip boss atlases (`boss/<id>`) + parts + cached white hit-flash!
+    if (customPack) {
+      const baseKey = `boss/${boss.id}`;
+      const customBoss = customPack.getSprite(baseKey);
+
+      if (isDrawable(customBoss)) {
+        // Map boss.state -> #11 packed clip names: idle, move, jump, telegraph, attack, dash, stomp, stunned
+        const clipCands = isLaserState(boss.state)
+          ? BOSS_CLIPS_LASER
+          : isChargeOrDashState(boss.state)
+            ? BOSS_CLIPS_CHARGE
+            : isSlamState(boss.state)
+              ? BOSS_CLIPS_SLAM
+              : isTelegraphState(boss.state)
+                ? BOSS_CLIPS_TELEGRAPH
+                : boss.state === 'stunned' || boss.state === 'vulnerable'
+                  ? BOSS_CLIPS_STUNNED
+                  : Math.abs(boss.vx) > 0.6
+                    ? BOSS_CLIPS_MOVE
+                    : BOSS_CLIPS_IDLE;
+
+        const animFps = isChargeOrDashState(boss.state) ? 12 : isTelegraphState(boss.state) ? 10 : 8;
+        resolveCustomFrame(customPack, baseKey, customBoss, timeSec, animFps, true, this.slice, clipCands);
+
+        const isFloating =
+          boss.id === 'primal_eye' ||
+          boss.id === 'electro_sphinx' ||
+          boss.id === 'nightmare_sovereign';
+        const hover = isFloating ? Math.round(Math.sin(timeSec * 3.4) * 3) : 0;
+
+        // Native 1:1 pixel dimensions when manifest SpriteFrameRects exist; clamped fallback for legacy packs
+        let dw = this.slice.sw;
+        let dh = this.slice.sh;
+        if (!this.slice.hasManifestRect) {
+          const targetW = Math.round(boss.width * PPU * 1.15);
+          const targetH = Math.round(boss.height * PPU * 1.15);
+          const maxBound = Math.max(targetW, targetH);
+          const minBound = Math.min(targetW, targetH) * 0.72;
+          if (dw > maxBound || dh > maxBound) {
+            const s = maxBound / Math.max(dw, dh);
+            dw = Math.max(24, Math.round(dw * s));
+            dh = Math.max(24, Math.round(dh * s));
+          } else if (Math.max(dw, dh) < minBound) {
+            const s = minBound / Math.max(1, Math.max(dw, dh));
+            dw = Math.round(dw * s);
+            dh = Math.round(dh * s);
+          }
+        }
+
+        const useCenterAnchor = this.slice.hasManifestRect ? this.slice.pivotY <= 0.65 : isFloating;
+        ctx.save();
+        if (useCenterAnchor) {
+          ctx.translate(cx, cy + hover);
+        } else {
+          ctx.translate(cx, footY + hover);
+        }
+        if (boss.facing < 0 && boss.id !== 'primal_eye') {
+          ctx.scale(-1, 1);
+        }
+        const dx = -Math.round(dw * this.slice.pivotX);
+        const dy = -Math.round(dh * this.slice.pivotY);
+        drawSpriteRect(
+          ctx,
+          customBoss,
+          this.slice.sx,
+          this.slice.sy,
+          this.slice.sw,
+          this.slice.sh,
+          dx,
+          dy,
+          dw,
+          dh,
+          flash,
+        );
+        ctx.restore();
+
+        // Origin boss satellite parts (`boss/primal_eye_iris`, `boss/primal_eye_spike`, `boss/electro_sphinx_*`)
+        if (boss.id === 'primal_eye') {
+          const customIris = customPack.getSprite('boss/primal_eye_iris');
+          if (isDrawable(customIris)) {
+            const heroCx = state.hero.x + state.hero.width * 0.5;
+            const heroCy = state.hero.y + state.hero.height * 0.5;
+            const bossCx = wx + boss.width * 0.5;
+            const bossCy = wy + boss.height * 0.5;
+            const ddx = heroCx - bossCx;
+            const ddy = heroCy - bossCy;
+            const dist = Math.hypot(ddx, ddy) || 1;
+            const lx = Math.round((ddx / dist) * 9);
+            const ly = Math.round((-ddy / dist) * 7);
+            resolveCustomFrame(customPack, 'boss/primal_eye_iris', customIris, timeSec, 8, true, this.slice);
+            drawSpriteRect(
+              ctx,
+              customIris,
+              this.slice.sx,
+              this.slice.sy,
+              this.slice.sw,
+              this.slice.sh,
+              cx + lx - (this.slice.sw >> 1),
+              cy + hover + ly - (this.slice.sh >> 1),
+              this.slice.sw,
+              this.slice.sh,
+              flash,
+            );
+          }
+          const spikeKey = customPack.getSprite('boss/primal_eye_spike')
+            ? 'boss/primal_eye_spike'
+            : 'boss/primal_eye_tendril';
+          const customPod = customPack.getSprite(spikeKey);
+          if (isDrawable(customPod)) {
+            resolveCustomFrame(customPack, spikeKey, customPod, timeSec, 8, true, this.slice);
+            const podCount = boss.phase === 3 ? 6 : 4;
+            const orbitR = 52 + (boss.phase - 1) * 6 + Math.round(Math.sin(timeSec * 3.2) * 4);
+            const orbitSpd = boss.phase === 3 ? 2.5 : boss.phase === 2 ? 1.85 : 1.25;
+            for (let p = 0; p < podCount; p++) {
+              const ang = timeSec * orbitSpd + (p / podCount) * TWO_PI;
+              const px = Math.round(cx + Math.cos(ang) * orbitR);
+              const py = Math.round(cy + hover + Math.sin(ang) * orbitR * 0.76);
+              drawSpriteRect(
+                ctx,
+                customPod,
+                this.slice.sx,
+                this.slice.sy,
+                this.slice.sw,
+                this.slice.sh,
+                px - (this.slice.sw >> 1),
+                py - (this.slice.sh >> 1),
+                this.slice.sw,
+                this.slice.sh,
+                flash,
+              );
+            }
+          }
+        } else if (boss.id === 'electro_sphinx') {
+          const customHead = customPack.getSprite('boss/electro_sphinx_head');
+          if (isDrawable(customHead)) {
+            resolveCustomFrame(customPack, 'boss/electro_sphinx_head', customHead, timeSec, 8, true, this.slice);
+            drawSpriteRect(
+              ctx,
+              customHead,
+              this.slice.sx,
+              this.slice.sy,
+              this.slice.sw,
+              this.slice.sh,
+              cx - (this.slice.sw >> 1),
+              cy + hover - (dh >> 1) - (this.slice.sh >> 2),
+              this.slice.sw,
+              this.slice.sh,
+              flash,
+            );
+          }
+          if (boss.shieldActive) {
+            const customShield = customPack.getSprite('boss/electro_sphinx_shield');
+            if (isDrawable(customShield)) {
+              resolveCustomFrame(customPack, 'boss/electro_sphinx_shield', customShield, timeSec, 10, true, this.slice);
+              ctx.drawImage(
+                customShield,
+                this.slice.sx,
+                this.slice.sy,
+                this.slice.sw,
+                this.slice.sh,
+                cx - (this.slice.sw >> 1),
+                cy + hover - (this.slice.sh >> 1),
+                this.slice.sw,
+                this.slice.sh,
+              );
+            }
+          }
+        }
+
+        ctx.globalAlpha = prevAlpha;
+        return;
       }
-      ctx.drawImage(customBoss, -(bw >> 1), -(bh >> 1), bw, bh);
-      ctx.restore();
-      ctx.globalAlpha = prevAlpha;
-      return;
     }
 
     // Bespoke multi-part animated pixel rendering per BossId

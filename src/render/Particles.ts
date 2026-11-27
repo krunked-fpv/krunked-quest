@@ -9,6 +9,7 @@ import {
   VIEWPORT_W,
   type BiomeId,
   type HeroFormId,
+  type IAssetPackManager,
   type SimEvent,
 } from '../contracts/index.js';
 import {
@@ -18,11 +19,18 @@ import {
   OUTLINE_DARK,
   UI_COLORS,
 } from '../assets/palettes.js';
+import type { ProceduralPixelAtlas } from '../assets/ProceduralPixelAtlas.js';
+import {
+  isDrawable,
+  resolveCustomFrame,
+  type SpriteSliceOut,
+} from './EntityRenderer.js';
 import type { PixelFont, PixelFontColor } from './PixelFont.js';
 
 const MAX_PARTICLES = 256;
 const MAX_SHOCKWAVES = 16;
 const MAX_POPUPS = 32;
+const MAX_FX_BURSTS = 24;
 const HALF_W = VIEWPORT_W * 0.5; // 288
 const HALF_H = VIEWPORT_H * 0.5; // 162
 const BOSS_DEFEAT_COLORS: readonly string[] = [
@@ -82,15 +90,38 @@ interface FloatingPopup {
   scale: number;
 }
 
+interface FxBurst {
+  active: boolean;
+  x: number;
+  y: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  key: string;
+  flipX: boolean;
+}
+
 export class ParticleSystem {
   private readonly particles: Particle[] = [];
   private readonly shockwaves: Shockwave[] = [];
   private readonly popups: FloatingPopup[] = [];
+  private readonly fxBursts: FxBurst[] = [];
   private nextParticleCursor = 0;
   private nextWaveCursor = 0;
   private nextPopupCursor = 0;
+  private nextBurstCursor = 0;
   private rng = 0x9e3779b9;
   private ambientTimer = 0;
+  private readonly slice: SpriteSliceOut = {
+    sx: 0,
+    sy: 0,
+    sw: 32,
+    sh: 32,
+    pivotX: 0.5,
+    pivotY: 0.5,
+    hasManifestRect: false,
+    matchedClip: false,
+  };
 
   constructor() {
     for (let i = 0; i < MAX_PARTICLES; i++) {
@@ -138,6 +169,18 @@ export class ParticleSystem {
         scale: 1,
       });
     }
+    for (let i = 0; i < MAX_FX_BURSTS; i++) {
+      this.fxBursts.push({
+        active: false,
+        x: 0,
+        y: 0,
+        life: 0,
+        maxLife: 0.25,
+        size: 32,
+        key: 'stomp_ring',
+        flipX: false,
+      });
+    }
   }
 
   private rand(): number {
@@ -157,6 +200,27 @@ export class ParticleSystem {
     for (let i = 0; i < MAX_PARTICLES; i++) this.particles[i]!.active = false;
     for (let i = 0; i < MAX_SHOCKWAVES; i++) this.shockwaves[i]!.active = false;
     for (let i = 0; i < MAX_POPUPS; i++) this.popups[i]!.active = false;
+    for (let i = 0; i < MAX_FX_BURSTS; i++) this.fxBursts[i]!.active = false;
+  }
+
+  public spawnFxBurst(
+    x: number,
+    y: number,
+    key: string,
+    size = 36,
+    life = 0.26,
+    flipX = false,
+  ): void {
+    const b = this.fxBursts[this.nextBurstCursor]!;
+    this.nextBurstCursor = (this.nextBurstCursor + 1) % MAX_FX_BURSTS;
+    b.active = true;
+    b.x = x;
+    b.y = y;
+    b.life = life;
+    b.maxLife = life;
+    b.size = size;
+    b.key = key;
+    b.flipX = flipX;
   }
 
   private spawnParticle(
@@ -314,6 +378,7 @@ export class ParticleSystem {
           if (ev.air) {
             this.spawnShockwave(ev.x, ev.y + 0.1, 0.8, 0.2, pal[4], pal[0], true);
           }
+          this.spawnFxBurst(ev.x, ev.y + 0.15, 'jump_dust', 28, 0.22);
           break;
         }
 
@@ -338,6 +403,7 @@ export class ParticleSystem {
           if (ev.heavy) {
             this.spawnShockwave(ev.x, ev.y + 0.08, 1.35, 0.24, HIGHLIGHT_CREAM, UI_COLORS.frameGold, true);
           }
+          this.spawnFxBurst(ev.x, ev.y + 0.12, 'land_dust', ev.heavy ? 42 : 28, 0.24);
           break;
         }
 
@@ -393,11 +459,85 @@ export class ParticleSystem {
             );
           }
           this.spawnShockwave(ev.x, ev.y + 0.4, 0.95, 0.2, c1, c2, false);
+          this.spawnFxBurst(
+            ev.x,
+            ev.y + 0.45,
+            ev.kind === 'fire'
+              ? 'fire_blast'
+              : ev.kind === 'volt'
+                ? 'volt_arc'
+                : ev.kind === 'shadow'
+                  ? 'evil_stomp'
+                  : ev.kind === 'wall'
+                    ? 'wall_stomp'
+                    : 'stomp_jump',
+            ev.kind === 'fire' ? 46 : 40,
+            0.28,
+          );
+          break;
+        }
+
+        case 'ground_stomp': {
+          const col1 = ev.fiery ? '#ffe640' : HIGHLIGHT_CREAM;
+          const col2 = ev.fiery ? '#ff4419' : '#ff59b8';
+          const count = ev.fiery ? 18 : 12;
+          for (let k = 0; k < count; k++) {
+            const ang = this.randRange(0.2, Math.PI - 0.2);
+            const spd = this.randRange(2.2, ev.fiery ? 7.2 : 5.2);
+            this.spawnParticle(
+              ev.x,
+              ev.y + 0.1,
+              Math.cos(ang) * spd,
+              Math.sin(ang) * spd,
+              -16,
+              3,
+              k % 2 === 0 ? col1 : col2,
+              col2,
+              this.randRange(0.24, 0.42),
+              ParticleShape.Square,
+              true,
+            );
+          }
+          this.spawnShockwave(ev.x, ev.y + 0.12, ev.fiery ? 1.85 : 1.35, 0.26, col1, col2, true);
+          this.spawnFxBurst(ev.x, ev.y + 0.35, 'stomp_ring', ev.fiery ? 56 : 46, 0.3);
+          this.spawnFxBurst(ev.x, ev.y + 0.45, 'stomp_jump', 42, 0.28);
+          if (ev.fiery) {
+            this.spawnFxBurst(ev.x, ev.y + 0.45, 'fire_blast', 52, 0.3);
+          }
+          break;
+        }
+
+        case 'tongue_lash': {
+          const fxKey =
+            ev.kind === 'wall_dash'
+              ? 'wall_stomp'
+              : ev.kind === 'ground_dash'
+                ? 'stomp_jump'
+                : ev.kind === 'ground_stomp'
+                  ? 'stomp_ring'
+                  : 'stomp_hit';
+          this.spawnFxBurst(ev.x, ev.y + 0.35, fxKey, 42, 0.26, ev.dirX < 0);
+          for (let k = 0; k < 8; k++) {
+            this.spawnParticle(
+              ev.x + this.randRange(-0.18, 0.18),
+              ev.y + 0.35 + this.randRange(-0.15, 0.15),
+              ev.dirX * this.randRange(2.0, 5.5) + this.randRange(-1.2, 1.2),
+              ev.dirY * this.randRange(1.5, 4.5) + this.randRange(-0.8, 1.8),
+              -9,
+              3,
+              k % 2 === 0 ? HIGHLIGHT_CREAM : '#ff59b8',
+              '#d42aff',
+              this.randRange(0.18, 0.32),
+              ParticleShape.Diamond,
+              true,
+            );
+          }
           break;
         }
 
         case 'stomp_start':
           this.spawnShockwave(ev.x, ev.y + 0.45, 0.75, 0.16, HIGHLIGHT_CREAM, UI_COLORS.comboMid, false);
+          this.spawnFxBurst(ev.x, ev.y + 0.35, 'stomp_jump', 36, 0.22);
           break;
 
         case 'stomp_impact': {
@@ -422,6 +562,10 @@ export class ParticleSystem {
             );
           }
           this.spawnShockwave(ev.x, ev.y + 0.1, ev.explosive ? 2.1 : 1.45, 0.28, col1, col2, true);
+          this.spawnFxBurst(ev.x, ev.y + 0.35, 'stomp_ring', ev.explosive ? 64 : 48, 0.32);
+          if (ev.explosive) {
+            this.spawnFxBurst(ev.x, ev.y + 0.5, 'fire_blast', 56, 0.32);
+          }
           break;
         }
 
@@ -473,6 +617,7 @@ export class ParticleSystem {
             UI_COLORS.frameGold,
             false,
           );
+          this.spawnFxBurst(ev.x, ev.y + 0.45, ev.killed ? 'stomp_hit' : 'hit_spark', ev.killed ? 42 : 30, 0.24);
           if (ev.killed) {
             const label = ev.combo > 1 ? `${ev.combo}X!` : '+5';
             this.spawnPopup(ev.x, ev.y + 0.9, label, ev.combo >= 4 ? 'magenta' : 'gold', 1, 0.72);
@@ -499,6 +644,7 @@ export class ParticleSystem {
             );
           }
           this.spawnShockwave(ev.x, ev.y, 1.9, 0.28, HIGHLIGHT_CREAM, '#ff5268', false);
+          this.spawnFxBurst(ev.x, ev.y, 'stomp_hit', 48, 0.26);
           this.spawnPopup(ev.x, ev.y + 0.8, 'HIT!', 'orange', 1, 0.65);
           break;
         }
@@ -774,6 +920,15 @@ export class ParticleSystem {
       pop.y += pop.vy * dt;
       pop.vy *= 0.93;
     }
+
+    for (let i = 0; i < MAX_FX_BURSTS; i++) {
+      const b = this.fxBursts[i]!;
+      if (!b.active) continue;
+      b.life -= dt;
+      if (b.life <= 0) {
+        b.active = false;
+      }
+    }
   }
 
   public render(
@@ -781,7 +936,88 @@ export class ParticleSystem {
     camX: number,
     camY: number,
     font: PixelFont,
+    atlas: ProceduralPixelAtlas | null = null,
+    customPack: IAssetPackManager | null = null,
   ): void {
+    // 0. Pooled pixel sprite FX bursts (stomp impact rings, tongue sparks, fire blasts, volt arcs!)
+    for (let i = 0; i < MAX_FX_BURSTS; i++) {
+      const b = this.fxBursts[i]!;
+      if (!b.active) continue;
+      const sx = Math.round((b.x - camX) * PPU + HALF_W);
+      const sy = Math.round((camY - b.y) * PPU + HALF_H);
+      if (sx < -128 || sx > VIEWPORT_W + 128 || sy < -128 || sy > VIEWPORT_H + 128) continue;
+      const prog = Math.max(0, Math.min(0.999, 1 - b.life / b.maxLife));
+      const fullKey = `fx/${b.key}`;
+      const customFx = customPack ? customPack.getSprite(fullKey) : null;
+      if (isDrawable(customFx)) {
+        const fallbackCols = b.key === 'stomp_ring' ? 8 : 0;
+        const fallbackRows = b.key === 'stomp_ring' ? 2 : 0;
+        resolveCustomFrame(
+          customPack,
+          fullKey,
+          customFx,
+          0,
+          24,
+          false,
+          this.slice,
+          undefined,
+          fallbackCols,
+          fallbackRows,
+          -1,
+          prog,
+        );
+        const dw = this.slice.hasManifestRect ? this.slice.sw : b.size;
+        const dh = this.slice.hasManifestRect
+          ? this.slice.sh
+          : Math.round(b.size / Math.max(0.4, this.slice.sw / Math.max(1, this.slice.sh)));
+        const dx = -Math.round(dw * this.slice.pivotX);
+        const dy = -Math.round(dh * this.slice.pivotY);
+        if (b.flipX) {
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.scale(-1, 1);
+          ctx.drawImage(
+            customFx,
+            this.slice.sx,
+            this.slice.sy,
+            this.slice.sw,
+            this.slice.sh,
+            dx,
+            dy,
+            dw,
+            dh,
+          );
+          ctx.restore();
+        } else {
+          ctx.drawImage(
+            customFx,
+            this.slice.sx,
+            this.slice.sy,
+            this.slice.sw,
+            this.slice.sh,
+            sx + dx,
+            sy + dy,
+            dw,
+            dh,
+          );
+        }
+      } else if (atlas) {
+        const builtKey =
+          b.key === 'stomp_hit' || b.key === 'hit_spark' || b.key === 'stomp_jump' || b.key === 'wall_stomp'
+            ? 'tongue_impact'
+            : b.key === 'evil_stomp'
+              ? 'shadow_slash'
+              : b.key;
+        const built = atlas.fx.get(builtKey);
+        if (built) {
+          const f4 = Math.min(3, (prog * 4) | 0);
+          const fw = built.width >> 2;
+          const fh = built.height;
+          ctx.drawImage(built, f4 * fw, 0, fw, fh, sx - (fw >> 1), sy - (fh >> 1), fw, fh);
+        }
+      }
+    }
+
     // 1. Pixel-stepped shockwave rings
     for (let i = 0; i < MAX_SHOCKWAVES; i++) {
       const w = this.shockwaves[i]!;

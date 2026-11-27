@@ -6,7 +6,6 @@
  */
 
 import {
-  BIOME_IDS,
   HERO_FORMS,
   type BiomeId,
   type BossId,
@@ -16,7 +15,6 @@ import {
   type ShopId,
 } from '../contracts/index.js';
 import {
-  BIOME_PALETTES,
   FLASH_WHITE,
   HERO_FORM_PALETTES,
   HIGHLIGHT_CREAM,
@@ -24,8 +22,10 @@ import {
   UI_COLORS,
   hexToAbgr,
   mixHex,
-  type BiomePalette,
 } from './palettes.js';
+import { getBuiltInWorldArt, type BiomeParallaxSet } from './BiomeArtBaker.js';
+
+export type { BiomeParallaxSet };
 
 export const HERO_STD_FRAME_W = 36;
 export const HERO_STD_FRAME_H = 36;
@@ -33,7 +33,7 @@ export const HERO_STD_FRAME_COUNT = 12;
 
 export const HERO_ACT_FRAME_W = 48;
 export const HERO_ACT_FRAME_H = 48;
-export const HERO_ACT_FRAME_COUNT = 6;
+export const HERO_ACT_FRAME_COUNT = 10;
 
 export const enum HeroStdFrame {
   Idle0 = 0,
@@ -57,6 +57,10 @@ export const enum HeroActFrame {
   Uppercut1 = 3,
   Glide0 = 4,
   Glide1 = 5,
+  Tongue0 = 6,
+  Tongue1 = 7,
+  Dive0 = 8,
+  Blink0 = 9,
 }
 
 export interface HeroSpriteSet {
@@ -78,13 +82,6 @@ export interface BossSpriteSet {
   readonly flash: HTMLCanvasElement;
   readonly frameW: number;
   readonly frameH: number;
-}
-
-export interface BiomeParallaxSet {
-  readonly sky: HTMLCanvasElement;
-  readonly far: HTMLCanvasElement;
-  readonly mid: HTMLCanvasElement;
-  readonly near: HTMLCanvasElement;
 }
 
 // ============================================================================
@@ -346,158 +343,261 @@ class PixelBuf {
   }
 }
 
-function hash2d(x: number, y: number, seed = 0): number {
-  let n = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 1442695041);
-  n = (n ^ (n >>> 13)) >>> 0;
-  n = Math.imul(n, 1274126177) >>> 0;
-  return (n ^ (n >>> 16)) >>> 0;
-}
 
 // ============================================================================
 // Hero Baking (All 6 Elemental Forms: 36x36 Standard + 48x48 Action)
+// Authentic chunky blocky-creature silhouette with oversized glossy protruding
+// tongue, expressive tall pixel eyes, buck teeth, and distinct elemental gear!
 // ============================================================================
 
-function drawHeroCrest(
+interface HeroTongueColors {
+  readonly hi: number;
+  readonly mid: number;
+  readonly dark: number;
+  readonly spec: number;
+}
+
+function getHeroTongueColors(form: HeroFormId, p: readonly number[]): HeroTongueColors {
+  const white = hexToAbgr(HIGHLIGHT_CREAM);
+  switch (form) {
+    case 'krunk_basic':
+      return {
+        hi: hexToAbgr('#ff4d6d'),
+        mid: hexToAbgr('#da0b35'),
+        dark: hexToAbgr('#800824'),
+        spec: white,
+      };
+    case 'krunk_fire':
+      return {
+        hi: hexToAbgr('#fff066'),
+        mid: hexToAbgr('#ff8a00'),
+        dark: hexToAbgr('#b83800'),
+        spec: white,
+      };
+    case 'krunk_leaf':
+      return {
+        hi: hexToAbgr('#c84dff'),
+        mid: hexToAbgr('#7a12b8'),
+        dark: hexToAbgr('#451d49'),
+        spec: white,
+      };
+    case 'krunk_rock':
+      return {
+        hi: hexToAbgr('#94a0a8'),
+        mid: hexToAbgr('#626d75'),
+        dark: hexToAbgr('#384047'),
+        spec: hexToAbgr('#d8e2e8'),
+      };
+    case 'krunk_electric':
+      return {
+        hi: hexToAbgr('#c8ffff'),
+        mid: hexToAbgr('#22c8ff'),
+        dark: hexToAbgr('#1248d8'),
+        spec: white,
+      };
+    case 'krunk_shadow':
+      return {
+        hi: hexToAbgr('#78ff4d'),
+        mid: hexToAbgr('#18c700'),
+        dark: hexToAbgr('#0b6b18'),
+        spec: hexToAbgr('#e0ffcc'),
+      };
+    default:
+      return { hi: p[4]!, mid: p[3]!, dark: p[2]!, spec: white };
+  }
+}
+
+function drawHeroHeadgear(
   b: PixelBuf,
   form: HeroFormId,
   cx: number,
   topY: number,
   p: readonly number[],
   phase: number,
+  flutter: number,
 ): void {
-  const c0 = p[0]!;
-  const c2 = p[2]!;
-  const c4 = p[4]!;
-  const c5 = p[5]!;
+  const white = hexToAbgr(HIGHLIGHT_CREAM);
+  const dark = hexToAbgr(OUTLINE_DARK);
 
   if (form === 'krunk_basic') {
-    // Twin curved cute cream horns
-    b.tri(cx - 7, topY + 2, cx - 10, topY - 4, cx - 3, topY + 1, c4);
-    b.px(cx - 9, topY - 3, hexToAbgr(HIGHLIGHT_CREAM));
-    b.tri(cx + 5, topY + 2, cx + 10, topY - 4, cx + 2, topY + 1, c4);
-    b.px(cx + 8, topY - 3, hexToAbgr(HIGHLIGHT_CREAM));
+    // Signature twin blocky notched top horns / ears (M-like silhouette notch)
+    b.rect(cx - 8, topY - 2, 6, 4, p[0]!);
+    b.rect(cx + 2, topY - 2, 6, 4, p[0]!);
+    b.rect(cx - 7, topY - 2, 4, 1, p[4]!);
+    b.rect(cx + 3, topY - 2, 4, 1, p[4]!);
+    // Clear center notch
+    b.rect(cx - 2, topY - 2, 4, 3, 0);
   } else if (form === 'krunk_fire') {
-    // Blazing jagged flame hair crest
-    const sway = phase % 2 === 0 ? -1 : 1;
-    b.tri(cx - 8, topY + 3, cx - 6 + sway, topY - 6, cx - 1, topY + 2, c2);
-    b.tri(cx - 3, topY + 2, cx + 1 + sway, topY - 8, cx + 5, topY + 2, c0);
-    b.tri(cx + 2, topY + 3, cx + 8 + sway, topY - 5, cx + 9, topY + 3, c2);
-    b.tri(cx - 2, topY + 2, cx + 1, topY - 4, cx + 4, topY + 2, c4);
+    // Twin roaring animated flame plumes erupting from twin head notches
+    const sway = (phase & 1) === 0 ? -1 : 1;
+    b.rect(cx - 8, topY - 2, 5, 3, p[0]!);
+    b.rect(cx + 3, topY - 2, 5, 3, p[0]!);
+    b.rect(cx - 2, topY - 2, 4, 3, 0);
+    // Left flame
+    b.tri(cx - 8, topY - 1, cx - 6 + sway, topY - 10, cx - 3, topY - 1, p[2]!);
+    b.tri(cx - 7, topY - 1, cx - 5 + sway, topY - 7, cx - 4, topY - 1, hexToAbgr('#ffec42'));
+    b.px(cx - 5 + sway, topY - 8, white);
+    // Right flame
+    b.tri(cx + 3, topY - 1, cx + 6 - sway, topY - 10, cx + 8, topY - 1, p[2]!);
+    b.tri(cx + 4, topY - 1, cx + 6 - sway, topY - 7, cx + 7, topY - 1, hexToAbgr('#ffec42'));
+    b.px(cx + 6 - sway, topY - 8, white);
   } else if (form === 'krunk_leaf') {
-    // Sprouting twin leaf crown + stem
-    b.line(cx, topY + 2, cx, topY - 3, c2);
-    b.ellipse(cx - 5, topY - 3, 5, 2.5, c0);
-    b.ellipse(cx + 5, topY - 3, 5, 2.5, c0);
-    b.line(cx - 7, topY - 3, cx - 2, topY - 3, c4);
-    b.line(cx + 2, topY - 3, cx + 7, topY - 3, c4);
+    // Wooden twig stem + oversized curved lush canopy leaf draping behind head
+    const twig = hexToAbgr('#b8681c');
+    const twigHi = hexToAbgr('#f0a848');
+    const leafDark = hexToAbgr('#22481f');
+    const leafMid = p[2]!;
+    const leafHi = p[0]!;
+    // Curved trailing giant leaf behind/above left side
+    b.ellipseShaded(cx - 9, topY + 1 + flutter, 7.5, 4.5, leafHi, leafMid, leafDark);
+    b.ellipseShaded(cx - 12, topY + 4 + flutter, 4.5, 5.5, leafMid, leafDark, dark);
+    b.line(cx - 12, topY + 2 + flutter, cx - 3, topY - 2, leafHi);
+    // Crisp forked twig stem on top
+    b.line(cx + 1, topY + 1, cx - 2, topY - 5, twig);
+    b.line(cx, topY - 2, cx + 4, topY - 5, twigHi);
+    b.px(cx - 2, topY - 5, twigHi);
   } else if (form === 'krunk_rock') {
-    // Armored golden stone crown + violet gem
-    b.rect(cx - 8, topY - 2, 16, 4, c0);
-    b.rect(cx - 6, topY - 5, 4, 4, c4);
-    b.rect(cx + 2, topY - 5, 4, 4, c4);
-    b.rect(cx - 2, topY - 4, 4, 4, c5);
-    b.px(cx - 1, topY - 3, hexToAbgr(HIGHLIGHT_CREAM));
+    // Purple martial headband across forehead + fluttering twin ribbon tails
+    const bandHi = hexToAbgr('#d44dff');
+    const bandMid = p[5]!;
+    const bandDark = hexToAbgr('#580878');
+    b.rect(cx - 8, topY - 1, 16, 4, bandMid);
+    b.rect(cx - 8, topY - 1, 16, 1, bandHi);
+    b.rect(cx - 8, topY + 2, 16, 1, bandDark);
+    // Fluttering headband knot tails behind left side
+    b.line(cx - 8, topY + 1, cx - 13, topY + 4 + flutter, bandMid);
+    b.line(cx - 8, topY + 2, cx - 12, topY + 7 + flutter, bandDark);
+    b.px(cx - 12, topY + 3 + flutter, bandHi);
   } else if (form === 'krunk_electric') {
-    // Spiky lightning-bolt crest
-    const z = phase % 2 === 0 ? 0 : 1;
-    b.tri(cx - 9, topY + 1, cx - 11, topY - 6 + z, cx - 3, topY, c0);
-    b.tri(cx - 2, topY + 1, cx + 2, topY - 8, cx + 4, topY + 1, c4);
-    b.tri(cx + 3, topY + 1, cx + 11, topY - 6 - z, cx + 8, topY + 2, c0);
+    // Glossy copper-orange volt safety helmet with brim & top ridge
+    const helmHi = hexToAbgr('#ff7838');
+    const helmMid = hexToAbgr('#cc3314');
+    const helmDark = hexToAbgr('#731208');
+    b.ellipseShaded(cx, topY + 1, 9.5, 5.5, helmHi, helmMid, helmDark, white);
+    b.rect(cx - 10, topY + 2, 20, 2, helmDark);
+    b.rect(cx - 9, topY + 1, 18, 1, white);
+    b.rect(cx - 2, topY - 5, 4, 3, helmHi);
+    b.px(cx - 1, topY - 4, white);
   } else {
-    // Shadow: twin spectral crown horns + neon emerald core
-    b.tri(cx - 8, topY + 2, cx - 11, topY - 6, cx - 3, topY + 1, c1Or(p));
-    b.tri(cx + 8, topY + 2, cx + 11, topY - 6, cx + 3, topY + 1, c1Or(p));
-    b.ellipse(cx, topY - 3, 2.5, 2.5, c4);
+    // Shadow: spiky crimson-magenta demon crest + crackling emerald wisps
+    const spikeHi = hexToAbgr('#ff3888');
+    const spikeMid = p[2]!;
+    const spikeDark = p[1]!;
+    b.tri(cx - 8, topY + 2, cx - 10, topY - 6, cx - 2, topY + 1, spikeMid);
+    b.tri(cx - 7, topY + 1, cx - 8, topY - 5, cx - 4, topY + 1, spikeHi);
+    b.tri(cx + 1, topY + 1, cx + 6, topY - 5, cx + 8, topY + 2, spikeDark);
+    b.tri(cx + 2, topY + 1, cx + 5, topY - 4, cx + 7, topY + 2, spikeHi);
+    if ((phase & 1) === 0) {
+      b.px(cx - 5, topY - 6, p[4]!);
+      b.px(cx + 4, topY - 6, p[4]!);
+    }
   }
 }
 
-function c1Or(p: readonly number[]): number {
-  return p[2]!;
-}
-
-function drawHeroCapeOrBack(
+function drawHeroBackGear(
   b: PixelBuf,
   form: HeroFormId,
   cx: number,
   cy: number,
   p: readonly number[],
   flutter: number,
+  phase: number,
 ): void {
-  const c2 = p[2]!;
-  const c3 = p[3]!;
-  const c4 = p[4]!;
-  if (form === 'krunk_leaf') {
-    b.tri(cx - 6, cy - 3, cx - 15, cy + 4 + flutter, cx - 4, cy + 7, c2);
-    b.tri(cx - 6, cy - 2, cx - 13, cy + 3 + flutter, cx - 5, cy + 5, p[0]!);
-  } else if (form === 'krunk_fire') {
-    b.tri(cx - 7, cy - 1, cx - 15, cy + 2 + flutter, cx - 6, cy + 5, c2);
-    b.tri(cx - 7, cy, cx - 13, cy + 1 + flutter, cx - 6, cy + 3, c4);
+  if (form === 'krunk_shadow') {
+    // Iconic dramatic high-collared silver-trimmed violet vampire cape!
+    const collarHi = hexToAbgr('#f2e6ff');
+    const collarMid = p[5]!;
+    const capeDark = p[0]!;
+    const capeMid = p[1]!;
+    b.tri(cx - 7, cy + 5, cx - 15, cy - 5 + flutter, cx - 4, cy - 2, capeDark);
+    b.tri(cx + 6, cy + 5, cx + 14, cy - 5 + flutter, cx + 4, cy - 2, capeDark);
+    b.line(cx - 15, cy - 5 + flutter, cx - 6, cy - 2, collarHi);
+    b.line(cx + 14, cy - 5 + flutter, cx + 6, cy - 2, collarHi);
+    b.line(cx - 14, cy - 4 + flutter, cx - 7, cy + 4, collarMid);
+    b.line(cx + 13, cy - 4 + flutter, cx + 7, cy + 4, collarMid);
+    b.tri(cx - 7, cy + 2, cx - 14, cy + 9 + flutter, cx - 3, cy + 9, capeMid);
   } else if (form === 'krunk_electric') {
-    // Crackling lightning tail zig-zag
-    b.line(cx - 8, cy + 2, cx - 13, cy - 1 + flutter, c4);
-    b.line(cx - 13, cy - 1 + flutter, cx - 11, cy + 3 + flutter, p[0]!);
-    b.line(cx - 11, cy + 3 + flutter, cx - 15, cy + 2 + flutter, c4);
-  } else if (form === 'krunk_shadow') {
-    b.tri(cx - 6, cy - 3, cx - 15, cy + 5 + flutter, cx - 3, cy + 8, p[1]!);
-    b.line(cx - 14, cy + 4 + flutter, cx - 8, cy + 6, c2);
-  } else {
-    // Classic flowing crimson scarf / rock cloak tail
-    b.tri(cx - 6, cy + 1, cx - 14, cy + 3 + flutter, cx - 6, cy + 6, c3);
-    b.line(cx - 13, cy + 3 + flutter, cx - 7, cy + 2, c4);
+    // Crackling cyan electric aura arcs looping around shoulders
+    const arcCol = p[4]!;
+    const shift = (phase & 1) === 0 ? 0 : 1;
+    b.px(cx - 13, cy - 2 + shift, arcCol);
+    b.px(cx - 14, cy + shift, arcCol);
+    b.px(cx - 13, cy + 3 - shift, arcCol);
+    b.px(cx + 13, cy - 2 - shift, arcCol);
+    b.px(cx + 14, cy + 1 - shift, arcCol);
+    b.px(cx + 12, cy + 4 + shift, arcCol);
   }
 }
 
-function drawHeroFace(
+function drawHeroFaceAndTongue(
   b: PixelBuf,
   form: HeroFormId,
   cx: number,
   cy: number,
   p: readonly number[],
   mood: 'normal' | 'happy' | 'fierce' | 'hurt',
+  tongueOut = 1,
 ): void {
   const white = hexToAbgr(HIGHLIGHT_CREAM);
   const dark = hexToAbgr(OUTLINE_DARK);
-  const eyeGlow = form === 'krunk_shadow' ? p[2]! : form === 'krunk_electric' ? p[4]! : white;
-  const pupilCol = form === 'krunk_shadow' ? p[4]! : dark;
+  const tongue = getHeroTongueColors(form, p);
 
   if (mood === 'hurt') {
-    // > < squint eyes
-    b.line(cx - 4, cy - 3, cx - 2, cy - 1, dark);
-    b.line(cx - 4, cy + 1, cx - 2, cy - 1, dark);
-    b.line(cx + 6, cy - 3, cx + 4, cy - 1, dark);
-    b.line(cx + 6, cy + 1, cx + 4, cy - 1, dark);
-    b.ellipse(cx + 1, cy + 3, 2, 1.5, dark);
+    // > < wince eyes
+    b.line(cx - 5, cy - 6, cx - 2, cy - 4, dark);
+    b.line(cx - 5, cy - 2, cx - 2, cy - 4, dark);
+    b.line(cx + 6, cy - 6, cx + 3, cy - 4, dark);
+    b.line(cx + 6, cy - 2, cx + 3, cy - 4, dark);
+    // Wide shocked mouth
+    b.rect(cx - 4, cy - 1, 9, 4, dark);
+    b.rect(cx - 3, cy, 7, 2, tongue.mid);
     return;
   }
 
-  // Expressive large pixel eyes (offset slightly forward to face right)
-  // Left eye
-  b.rect(cx - 4, cy - 4, 4, 5, eyeGlow);
-  b.rect(cx - 2, cy - 3, 2, 4, pupilCol);
-  b.px(cx - 3, cy - 3, white);
-  // Right eye
-  b.rect(cx + 3, cy - 4, 4, 5, eyeGlow);
-  b.rect(cx + 5, cy - 3, 2, 4, pupilCol);
-  b.px(cx + 4, cy - 3, white);
-
-  if (mood === 'fierce') {
-    // Angled heroic brows
-    b.line(cx - 4, cy - 5, cx, cy - 3, dark);
-    b.line(cx + 3, cy - 3, cx + 7, cy - 5, dark);
+  // Expressive tall vertical cartoon eyes (offset slightly forward right)
+  const eyeX1 = cx - 4;
+  const eyeX2 = cx + 2;
+  const eyeY = cy - 7;
+  if (form === 'krunk_shadow') {
+    // Fierce glowing neon-emerald eyes
+    b.rect(eyeX1, eyeY, 4, 5, dark);
+    b.rect(eyeX2, eyeY, 4, 5, dark);
+    b.rect(eyeX1 + 1, eyeY + 1, 2, 4, p[4]!);
+    b.rect(eyeX2 + 1, eyeY + 1, 2, 4, p[4]!);
+    b.px(eyeX1 + 1, eyeY + 1, white);
+    b.px(eyeX2 + 1, eyeY + 1, white);
+  } else {
+    const iris = form === 'krunk_leaf' ? hexToAbgr('#941458') : form === 'krunk_rock' ? hexToAbgr('#4d2c08') : dark;
+    b.rect(eyeX1, eyeY, 3, 6, iris);
+    b.rect(eyeX2, eyeY, 3, 6, iris);
+    // Crisp bright vertical eye catchlights
+    b.rect(eyeX1 + 1, eyeY + 1, 1, 3, white);
+    b.rect(eyeX2 + 1, eyeY + 1, 1, 3, white);
+    if (mood === 'fierce') {
+      b.line(eyeX1 - 1, eyeY - 1, eyeX1 + 3, eyeY + 1, dark);
+      b.line(eyeX2 - 1, eyeY + 1, eyeX2 + 3, eyeY - 1, dark);
+    }
   }
 
-  // Glowing rosy cheeks
-  const cheek = form === 'krunk_shadow' ? p[3]! : p[3]!;
-  b.rect(cx - 6, cy + 1, 2, 2, cheek);
-  b.rect(cx + 7, cy + 1, 2, 2, cheek);
+  // Wide open joyful/fierce mouth interior + signature twin white buck-teeth
+  const mouthY = cy - 1;
+  b.rect(cx - 5, mouthY, 11, 5, dark);
+  // Twin crisp white teeth along upper lip
+  b.rect(cx - 4, mouthY, 3, 2, white);
+  b.rect(cx + 2, mouthY, 3, 2, white);
 
-  // Cute grin / heroic mouth
-  if (mood === 'happy') {
-    b.line(cx, cy + 2, cx + 3, cy + 2, dark);
-    b.px(cx + 1, cy + 3, p[3]!);
-    b.px(cx + 2, cy + 3, p[3]!);
-  } else {
-    b.line(cx, cy + 2, cx + 3, cy + 2, dark);
+  // SIGNATURE HUGE GLOSSY PROTRUDING TONGUE!
+  if (tongueOut > 0) {
+    const tRx = 5.4 + tongueOut * 0.6;
+    const tRy = 4.2 + tongueOut * 0.4;
+    const tCx = cx + 1 + (tongueOut > 1 ? 1 : 0);
+    const tCy = mouthY + 4.2;
+    b.ellipseShaded(tCx, tCy, tRx, tRy, tongue.hi, tongue.mid, tongue.dark);
+    // Center tongue crease & juicy specular gleam
+    b.line(tCx, mouthY + 2, tCx, mouthY + 5, tongue.dark);
+    b.rect(tCx - 3, mouthY + 2, 2, 1, tongue.spec);
+    b.rect(tCx + 1, mouthY + 3, 2, 1, tongue.spec);
+    b.line(tCx - 4, mouthY + 6, tCx + 4, mouthY + 6, tongue.dark);
   }
 }
 
@@ -513,12 +613,13 @@ function bakeHeroForm(form: HeroFormId): HeroSpriteSet {
   ];
   const outlineCol = hexToAbgr(OUTLINE_DARK);
   const isShadow = form === 'krunk_shadow';
-  const bodyLight = isShadow ? p[1]! : p[0]!;
-  const bodyMid = isShadow ? p[0]! : p[1]!;
-  const bodyDark = isShadow ? p[3]! : p[2]!;
-  const specCol = hexToAbgr(mixHex(isShadow ? palHex[5] : palHex[0], HIGHLIGHT_CREAM, 0.5));
-  const bootCol = p[5]!;
-  const bootLight = hexToAbgr(mixHex(palHex[5], HIGHLIGHT_CREAM, 0.35));
+  const bodyLight = isShadow ? p[2]! : p[0]!;
+  const bodyMid = isShadow ? p[3]! : p[1]!;
+  const bodyDark = isShadow ? p[1]! : p[2]!;
+  const specCol = hexToAbgr(mixHex(isShadow ? palHex[2] : palHex[0], HIGHLIGHT_CREAM, 0.42));
+  const bootCol = form === 'krunk_fire' ? hexToAbgr('#4e29a8') : isShadow ? p[0]! : p[2]!;
+  const bootLight = form === 'krunk_fire' ? hexToAbgr('#38e858') : p[1]!;
+  const tongueCol = getHeroTongueColors(form, p);
 
   // 1) Standard 12-frame 36x36 sheet
   const stdSheet = new PixelBuf(HERO_STD_FRAME_W * HERO_STD_FRAME_COUNT, HERO_STD_FRAME_H);
@@ -528,16 +629,19 @@ function bakeHeroForm(form: HeroFormId): HeroSpriteSet {
     frameBuf.clear();
     const cx = 18;
     let cy = 20;
-    let rx = 9.5;
-    let ry = 9.0;
-    let legLdx = -4;
-    let legLdy = 9;
-    let legRdx = 4;
-    let legRdy = 9;
-    let armFdx = 9;
-    let armFdy = 1;
+    let bw = 16;
+    let bh = 18;
+    let legLdx = -5;
+    let legLdy = 10;
+    let legRdx = 5;
+    let legRdy = 10;
+    let armLdx = -10;
+    let armLdy = 3;
+    let armRdx = 9;
+    let armRdy = 3;
     let flutter = 0;
     let mood: 'normal' | 'happy' | 'fierce' | 'hurt' = 'happy';
+    let tongueOut = 1;
 
     switch (f as HeroStdFrame) {
       case HeroStdFrame.Idle0:
@@ -546,239 +650,307 @@ function bakeHeroForm(form: HeroFormId): HeroSpriteSet {
         break;
       case HeroStdFrame.Idle1:
         cy = 21;
-        rx = 10.0;
-        ry = 8.4;
+        bw = 17;
+        bh = 17;
         flutter = 1;
         break;
       case HeroStdFrame.Run0:
         cy = 19;
-        legLdx = -6;
-        legLdy = 8;
+        legLdx = -7;
+        legLdy = 9;
         legRdx = 6;
-        legRdy = 9;
-        armFdx = 10;
-        armFdy = 0;
+        legRdy = 11;
+        armLdx = -9;
+        armLdy = 1;
+        armRdx = 10;
+        armRdy = 4;
         flutter = -1;
         mood = 'fierce';
         break;
       case HeroStdFrame.Run1:
         cy = 20;
-        legLdx = -2;
-        legLdy = 10;
-        legRdx = 2;
-        legRdy = 8;
+        legLdx = -3;
+        legLdy = 11;
+        legRdx = 3;
+        legRdy = 9;
         flutter = 1;
         mood = 'fierce';
         break;
       case HeroStdFrame.Run2:
         cy = 19;
-        legLdx = 5;
-        legLdy = 8;
+        legLdx = 6;
+        legLdy = 9;
         legRdx = -6;
-        legRdy = 9;
-        armFdx = 8;
-        armFdy = 2;
+        legRdy = 11;
+        armLdx = -10;
+        armLdy = 4;
+        armRdx = 9;
+        armRdy = 1;
         flutter = 0;
         mood = 'fierce';
         break;
       case HeroStdFrame.Run3:
         cy = 20;
-        legLdx = -3;
-        legLdy = 9;
-        legRdx = 3;
-        legRdy = 10;
+        legLdx = -4;
+        legLdy = 10;
+        legRdx = 4;
+        legRdy = 11;
         flutter = -1;
         mood = 'fierce';
         break;
       case HeroStdFrame.Jump:
         cy = 18;
-        rx = 8.4;
-        ry = 10.2;
+        bw = 14;
+        bh = 20;
         legLdx = -4;
-        legLdy = 10;
+        legLdy = 11;
         legRdx = 5;
-        legRdy = 7;
-        armFdx = 8;
-        armFdy = -4;
+        legRdy = 8;
+        armLdx = -9;
+        armLdy = -2;
+        armRdx = 9;
+        armRdy = -3;
         flutter = 2;
         mood = 'happy';
         break;
       case HeroStdFrame.Fall:
         cy = 19;
-        rx = 9.4;
-        ry = 9.2;
+        bw = 16;
+        bh = 18;
         legLdx = -5;
-        legLdy = 8;
+        legLdy = 9;
         legRdx = 5;
-        legRdy = 8;
-        armFdx = 9;
-        armFdy = -5;
-        flutter = -3;
+        legRdy = 9;
+        armLdx = -10;
+        armLdy = -4;
+        armRdx = 10;
+        armRdy = -4;
+        flutter = -2;
         mood = 'normal';
         break;
       case HeroStdFrame.WallSlide:
         cy = 19;
-        rx = 8.8;
-        ry = 9.5;
+        bw = 15;
+        bh = 19;
         legLdx = -6;
-        legLdy = 7;
+        legLdy = 8;
         legRdx = 4;
-        legRdy = 10;
-        armFdx = -8;
-        armFdy = -3;
+        legRdy = 11;
+        armLdx = -9;
+        armLdy = -2;
+        armRdx = 8;
+        armRdy = 3;
         flutter = -2;
         mood = 'fierce';
         break;
       case HeroStdFrame.Dash:
         cy = 20;
-        rx = 11.2;
-        ry = 7.4;
+        bw = 18;
+        bh = 15;
         legLdx = -9;
-        legLdy = 4;
-        legRdx = -6;
-        legRdy = 7;
-        armFdx = 11;
-        armFdy = -1;
+        legLdy = 6;
+        legRdx = -5;
+        legRdy = 9;
+        armLdx = -11;
+        armLdy = 2;
+        armRdx = 11;
+        armRdy = 0;
         flutter = -1;
         mood = 'fierce';
+        tongueOut = 2;
         break;
       case HeroStdFrame.Hurt:
         cy = 20;
-        rx = 9.2;
-        ry = 8.8;
+        bw = 16;
+        bh = 17;
         legLdx = -6;
-        legLdy = 7;
+        legLdy = 9;
         legRdx = 6;
-        legRdy = 7;
-        armFdx = 9;
-        armFdy = -4;
+        legRdy = 9;
+        armLdx = -10;
+        armLdy = -3;
+        armRdx = 10;
+        armRdy = -3;
         flutter = -2;
         mood = 'hurt';
+        tongueOut = 0;
         break;
       case HeroStdFrame.VineSlide:
-        cy = 21;
-        rx = 9.4;
-        ry = 8.8;
+        cy = 20;
+        bw = 15;
+        bh = 18;
         legLdx = -4;
-        legLdy = 9;
+        legLdy = 10;
         legRdx = 5;
-        legRdy = 8;
-        armFdx = 4;
-        armFdy = -8;
+        legRdy = 9;
+        armLdx = -6;
+        armLdy = -7;
+        armRdx = 6;
+        armRdy = -7;
         flutter = 1;
         mood = 'fierce';
         break;
     }
 
-    // Back cape/scarf
-    drawHeroCapeOrBack(frameBuf, form, cx, cy, p, flutter);
+    // 1. Back cape / aura
+    drawHeroBackGear(frameBuf, form, cx, cy, p, flutter, f);
 
-    // Back boot
-    frameBuf.ellipse(cx + legLdx, cy + legLdy, 3.6, 2.8, bootCol);
-    frameBuf.px(cx + legLdx - 1, cy + legLdy - 1, bootLight);
+    // 2. Stubby feet / boots
+    frameBuf.rect(cx + legLdx - 3, cy + legLdy - 2, 6, 4, bootCol);
+    frameBuf.rect(cx + legRdx - 3, cy + legRdy - 2, 6, 4, bootCol);
+    frameBuf.px(cx + legLdx - 2, cy + legLdy - 2, bootLight);
+    frameBuf.px(cx + legRdx - 2, cy + legRdy - 2, bootLight);
 
-    // Plump shaded body
-    frameBuf.ellipseShaded(cx, cy, rx, ry, bodyLight, bodyMid, bodyDark, specCol);
+    // 3. Chunky upright blocky body with rich 16-bit bevel shading
+    const bx = cx - (bw >> 1);
+    const by = cy - (bh >> 1);
+    frameBuf.rect(bx, by, bw, bh, bodyMid);
+    frameBuf.rect(bx, by, bw - 2, bh - 3, bodyLight);
+    frameBuf.rect(bx, by, 2, bh - 2, specCol);
+    frameBuf.rect(bx + bw - 3, by + 2, 3, bh - 2, bodyDark);
+    frameBuf.rect(bx + 1, by + bh - 3, bw - 1, 3, bodyDark);
 
-    // Belly highlight patch
-    frameBuf.ellipse(cx + 1, cy + 4, rx * 0.55, ry * 0.36, p[4]!);
-
-    // Neck scarf collar (or rock chest rune / volt band)
-    if (form === 'krunk_rock') {
-      frameBuf.rect(cx - 2, cy + 3, 5, 4, p[5]!);
-      frameBuf.px(cx, cy + 4, hexToAbgr(HIGHLIGHT_CREAM));
-    } else if (form !== 'krunk_shadow') {
-      frameBuf.rect(cx - 6, cy + 3, 13, 2, p[3]!);
+    // Fire form's signature green-and-indigo shorts band along bottom of torso
+    if (form === 'krunk_fire') {
+      frameBuf.rect(bx + 1, by + bh - 5, bw - 2, 4, hexToAbgr('#4e29a8'));
+      frameBuf.rect(bx + 1, by + bh - 5, 3, 4, hexToAbgr('#2be84d'));
+      frameBuf.rect(bx + bw - 4, by + bh - 5, 3, 4, hexToAbgr('#2be84d'));
     }
 
-    // Front boot
-    frameBuf.ellipse(cx + legRdx, cy + legRdy, 3.8, 2.9, bootCol);
-    frameBuf.px(cx + legRdx, cy + legRdy - 1, bootLight);
+    // 4. Stubby side arms (Rock form gets giant sculpted boulder fists!)
+    const armRad = form === 'krunk_rock' ? 4.8 : 2.8;
+    frameBuf.ellipseShaded(cx + armLdx, cy + armLdy, armRad, armRad * 0.9, bodyLight, bodyMid, bodyDark);
+    frameBuf.ellipseShaded(cx + armRdx, cy + armRdy, armRad, armRad * 0.9, specCol, bodyLight, bodyDark);
 
-    // Front arm / gauntlet (Rock form gets chunky boulder fists!)
-    const armRad = form === 'krunk_rock' ? 4.2 : 2.8;
-    frameBuf.ellipseShaded(
-      cx + armFdx,
-      cy + armFdy,
-      armRad,
-      armRad * 0.9,
-      p[4]!,
-      p[0]!,
-      p[2]!,
-    );
+    // 5. Elemental headgear / twin notched crown / flames / leaf / headband / helmet / demon spikes
+    drawHeroHeadgear(frameBuf, form, cx, by, p, f, flutter);
 
-    // Head crest / horns / flame / leaves / lightning
-    drawHeroCrest(frameBuf, form, cx, Math.round(cy - ry), p, f);
+    // 6. Expressive eyes, buck teeth & HUGE glossy protruding tongue!
+    drawHeroFaceAndTongue(frameBuf, form, cx, cy, p, mood, tongueOut);
 
-    // Face
-    drawHeroFace(frameBuf, form, cx, cy - 1, p, mood);
-
-    // Crisp 1px dark-plum outline
+    // 7. Crisp 1px dark-plum outline
     frameBuf.outline(outlineCol);
     stdSheet.blit(frameBuf, f * HERO_STD_FRAME_W, 0);
   }
 
-  // 2) Action 6-frame 48x48 sheet (Stomp Roll 0..1, Uppercut 2..3, Glide 4..5)
+  // 2) Action 10-frame 48x48 sheet:
+  //    Stomp0..1 (downward tongue anvil slam), Uppercut0..1, Glide0..1, Tongue0..1 (forward tongue whip/dash), Dive0, Blink0
   const actSheet = new PixelBuf(HERO_ACT_FRAME_W * HERO_ACT_FRAME_COUNT, HERO_ACT_FRAME_H);
   const actBuf = new PixelBuf(HERO_ACT_FRAME_W, HERO_ACT_FRAME_H);
 
   for (let f = 0; f < HERO_ACT_FRAME_COUNT; f++) {
     actBuf.clear();
     const cx = 24;
-    const cy = 26;
+    const cy = 24;
 
     if (f === HeroActFrame.Stomp0 || f === HeroActFrame.Stomp1) {
-      // Spinning comet cannonball with blazing directional ring!
-      const spin = f === HeroActFrame.Stomp0 ? 0 : 1;
-      // Outer energy crescent above
-      actBuf.ellipse(cx, cy - 3, 15, 16, p[4]!);
-      actBuf.ellipse(cx, cy - 1, 13, 14, p[3]!);
-      // Curled spinning body ball
-      actBuf.ellipseShaded(cx, cy + 1, 11, 11, p[0]!, p[1]!, p[2]!, specCol);
-      // Spinning speed-stripe band across sphere
-      if (spin === 0) {
-        actBuf.line(cx - 8, cy - 3, cx + 8, cy + 4, p[4]!);
-        actBuf.line(cx - 7, cy - 2, cx + 7, cy + 5, hexToAbgr(HIGHLIGHT_CREAM));
-      } else {
-        actBuf.line(cx - 8, cy + 4, cx + 8, cy - 3, p[4]!);
-        actBuf.line(cx - 7, cy + 5, cx + 7, cy - 2, hexToAbgr(HIGHLIGHT_CREAM));
-      }
-      // Small horns peeking out
-      actBuf.tri(cx - 9, cy - 6, cx - 13, cy - 12, cx - 4, cy - 9, p[4]!);
-      actBuf.tri(cx + 9, cy - 6, cx + 13, cy - 12, cx + 4, cy - 9, p[4]!);
+      // SIGNATURE AIR STOMP: Krunk diving downward riding his giant hardened elastic TONGUE SLAM!
+      const stretch = f === HeroActFrame.Stomp0 ? 0 : 2;
+      // Kinetic downward speed crescent above head
+      actBuf.line(cx - 12, cy - 16, cx - 12, cy - 4, p[4]!);
+      actBuf.line(cx + 12, cy - 16, cx + 12, cy - 4, p[4]!);
+      actBuf.line(cx, cy - 18, cx, cy - 10, hexToAbgr(HIGHLIGHT_CREAM));
+      // Compact fierce body tucked above the slamming tongue
+      actBuf.rect(cx - 8, cy - 11, 16, 15, bodyMid);
+      actBuf.rect(cx - 8, cy - 11, 13, 12, bodyLight);
+      drawHeroHeadgear(actBuf, form, cx, cy - 11, p, f, -2);
+      // Fierce squint eyes looking straight down
+      actBuf.rect(cx - 5, cy - 7, 3, 4, outlineCol);
+      actBuf.rect(cx + 2, cy - 7, 3, 4, outlineCol);
+      actBuf.px(cx - 4, cy - 6, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.px(cx + 3, cy - 6, hexToAbgr(HIGHLIGHT_CREAM));
+      // GIANT DOWNWARD STOMP TONGUE ANVIL SLAM!
+      actBuf.rect(cx - 7, cy + 2, 14, 10 + stretch, tongueCol.mid);
+      actBuf.ellipseShaded(
+        cx,
+        cy + 12 + stretch,
+        12,
+        6.5,
+        tongueCol.hi,
+        tongueCol.mid,
+        tongueCol.dark,
+        tongueCol.spec,
+      );
+      actBuf.line(cx, cy + 4, cx, cy + 14 + stretch, tongueCol.dark);
+      // Impact shock crescent underneath tongue tip
+      actBuf.line(cx - 14, cy + 17 + stretch, cx + 14, cy + 17 + stretch, p[4]!);
+      actBuf.line(cx - 10, cy + 19 + stretch, cx + 10, cy + 19 + stretch, hexToAbgr(HIGHLIGHT_CREAM));
     } else if (f === HeroActFrame.Uppercut0 || f === HeroActFrame.Uppercut1) {
-      // Giant rising uppercut fist + heroic stretched Krunk!
+      // Giant rising uppercut stone/elemental fist + heroic stretched Krunk!
       const boost = f === HeroActFrame.Uppercut1 ? -2 : 0;
-      // Hero body lower
-      actBuf.ellipseShaded(cx - 2, cy + 6, 8.5, 9.5, p[0]!, p[1]!, p[2]!, specCol);
-      drawHeroFace(actBuf, form, cx - 2, cy + 4, p, 'fierce');
-      actBuf.ellipse(cx - 6, cy + 16, 3.5, 2.5, bootCol);
-      actBuf.ellipse(cx + 3, cy + 15, 3.5, 2.5, bootCol);
+      actBuf.rect(cx - 9, cy + 2, 14, 15, bodyMid);
+      actBuf.rect(cx - 9, cy + 2, 11, 12, bodyLight);
+      drawHeroFaceAndTongue(actBuf, form, cx - 2, cy + 9, p, 'fierce', 1);
+      actBuf.rect(cx - 7, cy + 17, 5, 4, bootCol);
+      actBuf.rect(cx + 1, cy + 16, 5, 4, bootCol);
       // Giant glowing uppercut gauntlet thrusting skyward!
       const fy = 12 + boost;
-      actBuf.ellipseShaded(cx + 4, fy, 11, 9.5, p[4]!, p[0]!, p[2]!, hexToAbgr(HIGHLIGHT_CREAM));
-      // Knuckle ridges
-      actBuf.rect(cx - 3, fy - 5, 4, 4, hexToAbgr(HIGHLIGHT_CREAM));
-      actBuf.rect(cx + 2, fy - 6, 4, 4, hexToAbgr(HIGHLIGHT_CREAM));
-      actBuf.rect(cx + 7, fy - 5, 4, 4, p[4]!);
-      // Upward shockwave chevrons
+      actBuf.ellipseShaded(cx + 5, fy, 11, 9.5, p[4]!, p[0]!, p[2]!, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.rect(cx - 2, fy - 5, 4, 4, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.rect(cx + 3, fy - 6, 4, 4, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.rect(cx + 8, fy - 5, 4, 4, p[4]!);
       actBuf.line(cx - 7, fy - 8, cx + 4, fy - 11, p[4]!);
       actBuf.line(cx + 4, fy - 11, cx + 15, fy - 8, p[4]!);
-    } else {
-      // Unfurled billowing Leaf Cape / Elemental Wings glide!
+    } else if (f === HeroActFrame.Glide0 || f === HeroActFrame.Glide1) {
+      // Unfurled giant overhead Leaf Canopy / Elemental Glide wings!
       const flap = f === HeroActFrame.Glide0 ? -2 : 2;
-      // Wide symmetric leafy/elemental wings
-      actBuf.ellipseShaded(cx - 12, cy - 4 + flap, 11, 6, p[4]!, p[0]!, p[2]!);
-      actBuf.ellipseShaded(cx + 12, cy - 4 + flap, 11, 6, p[4]!, p[0]!, p[2]!);
-      // Leaf ribs
-      actBuf.line(cx - 4, cy - 4 + flap, cx - 20, cy - 4 + flap, p[2]!);
-      actBuf.line(cx + 4, cy - 4 + flap, cx + 20, cy - 4 + flap, p[2]!);
-      // Hero hovering calmly in center
-      actBuf.ellipseShaded(cx, cy + 2, 9, 8.5, p[0]!, p[1]!, p[2]!, specCol);
-      actBuf.ellipse(cx - 4, cy + 11, 3.2, 2.5, bootCol);
-      actBuf.ellipse(cx + 4, cy + 11, 3.2, 2.5, bootCol);
-      drawHeroCrest(actBuf, form, cx, cy - 7, p, f);
-      drawHeroFace(actBuf, form, cx, cy + 1, p, 'happy');
+      actBuf.ellipseShaded(cx - 11, cy - 9 + flap, 11, 5.5, p[4]!, p[0]!, p[2]!);
+      actBuf.ellipseShaded(cx + 11, cy - 9 + flap, 11, 5.5, p[4]!, p[0]!, p[2]!);
+      actBuf.line(cx - 2, cy - 9 + flap, cx - 20, cy - 9 + flap, p[2]!);
+      actBuf.line(cx + 2, cy - 9 + flap, cx + 20, cy - 9 + flap, p[2]!);
+      actBuf.line(cx, cy - 9 + flap, cx, cy - 2, hexToAbgr('#b8681c'));
+      // Chunky Krunk hanging happily below
+      actBuf.rect(cx - 7, cy - 2, 14, 16, bodyMid);
+      actBuf.rect(cx - 7, cy - 2, 11, 13, bodyLight);
+      actBuf.rect(cx - 6, cy + 14, 5, 4, bootCol);
+      actBuf.rect(cx + 1, cy + 14, 5, 4, bootCol);
+      drawHeroFaceAndTongue(actBuf, form, cx, cy + 5, p, 'happy', 1);
+    } else if (f === HeroActFrame.Tongue0 || f === HeroActFrame.Tongue1) {
+      // SIGNATURE TONGUE LASH / GROUND DASH LAUNCH!
+      const reach = f === HeroActFrame.Tongue0 ? 15 : 19;
+      // Leaning forward torso at left-center
+      const bx = cx - 14;
+      const by = cy - 7;
+      actBuf.rect(bx, by, 16, 17, bodyMid);
+      actBuf.rect(bx, by, 13, 14, bodyLight);
+      actBuf.rect(bx - 1, by + 16, 6, 4, bootCol);
+      actBuf.rect(bx + 9, by + 15, 6, 4, bootCol);
+      drawHeroHeadgear(actBuf, form, bx + 8, by, p, f, -2);
+      // Fierce eyes + wide open mouth launching tongue forward!
+      actBuf.rect(bx + 5, by + 3, 3, 5, outlineCol);
+      actBuf.rect(bx + 10, by + 3, 3, 5, outlineCol);
+      actBuf.px(bx + 6, by + 4, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.px(bx + 11, by + 4, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.rect(bx + 8, by + 9, 8, 6, outlineCol);
+      // Thick gleaming elastic tongue whipping forward!
+      actBuf.rect(bx + 12, by + 10, reach, 5, tongueCol.mid);
+      actBuf.rect(bx + 12, by + 10, reach, 2, tongueCol.hi);
+      actBuf.rect(bx + 12, by + 14, reach, 1, tongueCol.dark);
+      actBuf.ellipseShaded(
+        bx + 12 + reach,
+        by + 12,
+        5.5,
+        4.5,
+        tongueCol.hi,
+        tongueCol.mid,
+        tongueCol.dark,
+        tongueCol.spec,
+      );
+    } else if (f === HeroActFrame.Dive0) {
+      // Diagonal Volt Dive / Electric Charge Torpedo!
+      actBuf.tri(cx - 16, cy - 12, cx + 16, cy + 12, cx - 2, cy + 10, p[4]!);
+      actBuf.rect(cx - 8, cy - 8, 16, 16, bodyLight);
+      drawHeroHeadgear(actBuf, form, cx, cy - 8, p, f, -1);
+      drawHeroFaceAndTongue(actBuf, form, cx, cy, p, 'fierce', 1);
+      actBuf.line(cx - 16, cy - 14, cx - 6, cy - 6, hexToAbgr(HIGHLIGHT_CREAM));
+      actBuf.line(cx + 6, cy + 6, cx + 18, cy + 14, p[4]!);
+    } else {
+      // High-speed Shadow / Volt Blink afterimage slash!
+      actBuf.tri(cx - 20, cy + 2, cx + 18, cy - 6, cx + 18, cy + 10, p[2]!);
+      actBuf.tri(cx - 16, cy + 2, cx + 14, cy - 3, cx + 14, cy + 7, p[4]!);
+      actBuf.rect(cx - 7, cy - 8, 15, 16, bodyLight);
+      drawHeroHeadgear(actBuf, form, cx, cy - 8, p, f, -2);
+      drawHeroFaceAndTongue(actBuf, form, cx, cy, p, 'fierce', 2);
     }
 
     actBuf.outline(outlineCol);
@@ -793,1236 +965,36 @@ function bakeHeroForm(form: HeroFormId): HeroSpriteSet {
   };
 }
 
-// ============================================================================
-// 16-Mask Autotiled Biome Tilesets (512x32) + Biome Top Deco (128x16)
-// Bitmask: 1=UP, 2=RIGHT, 4=DOWN, 8=LEFT
-// ============================================================================
-
-function bakeBiomeTileset(pal: BiomePalette): HTMLCanvasElement {
-  const sheet = new PixelBuf(32 * 16, 32);
-  const cOutline = hexToAbgr(pal.outline);
-  const cCapL = hexToAbgr(pal.capLight);
-  const cCapM = hexToAbgr(pal.capMid);
-  const cCapD = hexToAbgr(pal.capDark);
-  const cEarL = hexToAbgr(pal.earthLight);
-  const cEarM = hexToAbgr(pal.earthMid);
-  const cEarD = hexToAbgr(pal.earthDark);
-  const cEarDeep = hexToAbgr(pal.earthDeep);
-  const cAcc = hexToAbgr(pal.accent);
-  const cAccAlt = hexToAbgr(pal.accentAlt);
-  const style = pal.style;
-
-  for (let mask = 0; mask < 16; mask++) {
-    const hasUp = (mask & 1) !== 0;
-    const hasRight = (mask & 2) !== 0;
-    const hasDown = (mask & 4) !== 0;
-    const hasLeft = (mask & 8) !== 0;
-    const ox = mask * 32;
-
-    // 1. Interior biome texture
-    for (let ly = 0; ly < 32; ly++) {
-      for (let lx = 0; lx < 32; lx++) {
-        let col = cEarM;
-        const h = hash2d(lx + mask * 7, ly, 13);
-
-        if (
-          style === 'arcane_labyrinth' ||
-          style === 'nightmare_spire' ||
-          style === 'desert_sandstone'
-        ) {
-          // Carved stone brick masonry with mortar seams & top bevel
-          const brickRow = (ly >> 3) & 3;
-          const bx = (lx + (brickRow & 1 ? 8 : 0)) & 15;
-          const by = ly & 7;
-          if (by === 0 || bx === 0) {
-            col = cEarDeep;
-          } else if (by === 1 || bx === 1) {
-            col = cEarL;
-          } else if (by === 7 || bx === 15) {
-            col = cEarD;
-          } else {
-            col = (h & 7) === 0 ? cEarD : (h & 15) === 1 ? cEarL : cEarM;
-          }
-          // Glowing embedded runes on labyrinth / evil / desert turquoise tiles
-          if (style === 'nightmare_spire' && lx >= 13 && lx <= 18 && ly >= 13 && ly <= 18) {
-            if (lx === 15 || ly === 15) col = cAccAlt;
-          } else if (style === 'arcane_labyrinth' && (lx === 15 || lx === 16) && ly >= 12 && ly <= 19) {
-            col = ly % 3 === 0 ? cAcc : cAccAlt;
-          } else if (style === 'desert_sandstone' && lx >= 14 && lx <= 17 && ly >= 14 && ly <= 17) {
-            col = cAcc;
-          }
-        } else if (style === 'atomic_temple') {
-          // Tech alloy panel with glowing cyan circuit lines & golden rivets
-          if (lx === 0 || ly === 0 || lx === 31 || ly === 31) {
-            col = cEarDeep;
-          } else if (lx === 1 || ly === 1) {
-            col = cEarL;
-          } else if ((lx === 8 && ly >= 8 && ly <= 24) || (ly === 16 && lx >= 8 && lx <= 24)) {
-            col = cAccAlt;
-          } else if (
-            (lx === 4 || lx === 27) &&
-            (ly === 4 || ly === 27)
-          ) {
-            col = cAcc;
-          } else {
-            col = ((lx + ly) & 3) === 0 ? cEarD : cEarM;
-          }
-        } else if (style === 'volcanic_basalt') {
-          // Fractured basalt with glowing molten orange cracks
-          const crack = Math.abs(((lx * 3 + ly * 2) % 19) - 9);
-          if (crack === 0 && (ly > 9 || hasUp)) {
-            col = (lx + ly) % 3 === 0 ? cAcc : cCapM;
-          } else if (crack === 1) {
-            col = cEarDeep;
-          } else {
-            col = (h & 3) === 0 ? cEarD : (h & 7) === 1 ? cEarL : cEarM;
-          }
-        } else if (style === 'ghost_timber') {
-          // Horizontal ship deck planks with woodgrain & iron nails
-          const py = ly & 7;
-          if (py === 0) {
-            col = cEarDeep;
-          } else if (py === 1) {
-            col = cEarL;
-          } else if (py === 7) {
-            col = cEarD;
-          } else if ((lx === 4 || lx === 27) && (py === 3 || py === 4)) {
-            col = cEarDeep;
-          } else {
-            col = ((lx + (ly >> 3) * 5) % 9 === 0) ? cEarD : cEarM;
-          }
-        } else {
-          // Organic layered earth / cavern rock / primal bark with pebbles & Bayer dither
-          const band = ly >> 3;
-          if (band === 3 && !hasDown) {
-            col = ((lx + ly) & 1) === 0 ? cEarDeep : cEarD;
-          } else if (style === 'primal_bark') {
-            // Vertical gnarled bark ridges
-            const ridge = (lx + ((ly >> 2) & 1)) % 6;
-            col = ridge === 0 ? cEarDeep : ridge === 1 ? cEarL : ridge === 5 ? cEarD : cEarM;
-          } else {
-            // Chunky layered pebbles + dithered strata
-            const cellX = lx & 7;
-            const cellY = (ly + ((lx >> 3) & 1) * 4) & 7;
-            if (cellX >= 2 && cellX <= 5 && cellY >= 2 && cellY <= 4) {
-              col = cellY === 2 ? cEarL : cEarM;
-            } else if (cellX === 1 || cellY === 5) {
-              col = cEarD;
-            } else {
-              col = (h & 7) === 0 ? cEarDeep : (h & 3) === 0 ? cEarD : cEarM;
-            }
-          }
-        }
-
-        sheet.px(ox + lx, ly, col);
-      }
-    }
-
-    // 2. Lush biome TOP CAP when top is exposed (!hasUp)
-    if (!hasUp) {
-      for (let lx = 0; lx < 32; lx++) {
-        // Organic wavy overhang depth (6..9px)
-        const wave = ((lx * 5 + mask * 3) % 7 === 0 ? 2 : (lx % 4 === 0 ? 1 : 0));
-        const capDepth =
-          style === 'atomic_temple' || style === 'ghost_timber' ? 6 : 7 + wave;
-        for (let ly = 1; ly < capDepth; ly++) {
-          let c = cCapM;
-          if (ly <= 2) {
-            c = cCapL;
-          } else if (ly >= capDepth - 2) {
-            c = cCapD;
-          } else if (((lx + ly) & 3) === 0) {
-            c = cCapL;
-          }
-          sheet.px(ox + lx, ly, c);
-        }
-        // Crisp 1px shadow lip right under the overhang
-        sheet.px(ox + lx, capDepth, cOutline);
-        if (capDepth + 1 < 32) {
-          sheet.px(ox + lx, capDepth + 1, cEarDeep);
-        }
-        // Top highlight sparkles / wildflowers / glowing moss dots
-        if (lx > 3 && lx < 28 && lx % 9 === 4) {
-          sheet.px(ox + lx, 3, cAcc);
-          sheet.px(ox + lx + 1, 2, cAccAlt);
-        }
-      }
-    }
-
-    // 3. Exposed edge bevels & crisp 1px dark-plum outlines
-    if (!hasUp) {
-      for (let lx = 0; lx < 32; lx++) sheet.px(ox + lx, 0, cOutline);
-    }
-    if (!hasDown) {
-      for (let lx = 0; lx < 32; lx++) {
-        sheet.px(ox + lx, 30, cEarDeep);
-        sheet.px(ox + lx, 31, cOutline);
-      }
-    }
-    if (!hasLeft) {
-      for (let ly = 0; ly < 32; ly++) {
-        sheet.px(ox + 1, ly, ly < 7 && !hasUp ? cCapL : cEarL);
-        sheet.px(ox, ly, cOutline);
-      }
-    }
-    if (!hasRight) {
-      for (let ly = 0; ly < 32; ly++) {
-        sheet.px(ox + 30, ly, ly < 7 && !hasUp ? cCapD : cEarDeep);
-        sheet.px(ox + 31, ly, cOutline);
-      }
-    }
-
-    // 4. Rounded outer pixel corners when two adjacent sides are exposed
-    if (!hasUp && !hasLeft) {
-      sheet.px(ox, 0, 0);
-      sheet.px(ox + 1, 1, cOutline);
-    }
-    if (!hasUp && !hasRight) {
-      sheet.px(ox + 31, 0, 0);
-      sheet.px(ox + 30, 1, cOutline);
-    }
-    if (!hasDown && !hasLeft) {
-      sheet.px(ox, 31, 0);
-      sheet.px(ox + 1, 30, cOutline);
-    }
-    if (!hasDown && !hasRight) {
-      sheet.px(ox + 31, 31, 0);
-      sheet.px(ox + 30, 30, cOutline);
-    }
-  }
-
-  return sheet.toCanvas();
-}
-
-function bakeBiomeDeco(pal: BiomePalette): HTMLCanvasElement {
-  // 8 tiny 16x16 surface tufts/flowers/mushrooms/crystals placed atop exposed solid tiles
-  const sheet = new PixelBuf(16 * 8, 16);
-  const cL = hexToAbgr(pal.capLight);
-  const cM = hexToAbgr(pal.capMid);
-  const cD = hexToAbgr(pal.capDark);
-  const cAcc = hexToAbgr(pal.accent);
-  const cAcc2 = hexToAbgr(pal.accentAlt);
-  const cOut = hexToAbgr(pal.outline);
-  const cell = new PixelBuf(16, 16);
-
-  for (let v = 0; v < 8; v++) {
-    cell.clear();
-    if (v === 0 || v === 3 || v === 6) {
-      // Lush pixel grass blades
-      cell.line(4, 15, 3, 10, cM);
-      cell.line(7, 15, 8, 9, cL);
-      cell.line(11, 15, 13, 11, cM);
-      cell.px(8, 8, cL);
-    } else if (v === 1 || v === 5) {
-      // Wildflower / glowing mushroom bud
-      cell.line(7, 15, 7, 10, cD);
-      cell.line(8, 15, 8, 10, cM);
-      cell.ellipse(7.5, 8.5, 3.2, 2.5, cAcc);
-      cell.px(7, 8, cAcc2);
-      cell.px(8, 8, hexToAbgr(HIGHLIGHT_CREAM));
-    } else if (v === 2) {
-      // Twin small pebbles / crystal shards
-      cell.tri(4, 15, 6, 9, 9, 15, cAcc2);
-      cell.tri(9, 15, 11, 11, 13, 15, cAcc);
-      cell.px(6, 10, hexToAbgr(HIGHLIGHT_CREAM));
-    } else if (v === 4) {
-      // Low fern cluster
-      cell.ellipse(5, 13, 3, 2, cM);
-      cell.ellipse(10, 13, 3, 2, cD);
-      cell.ellipse(8, 11, 3, 2, cL);
-    } else {
-      // Tall accent sprout
-      cell.line(8, 15, 7, 8, cM);
-      cell.px(6, 9, cL);
-      cell.px(9, 10, cL);
-      cell.ellipse(7, 7, 2, 2, cAcc);
-    }
-    cell.outline(cOut);
-    sheet.blit(cell, v * 16, 0);
-  }
-  return sheet.toCanvas();
-}
-
-// ============================================================================
-// 3-Layer Atmospheric Pixel-Art Parallax Backdrops per Biome
-// ============================================================================
-
-function bakeBiomeParallax(pal: BiomePalette): BiomeParallaxSet {
-  const sky = new PixelBuf(576, 324);
-  const cTop = hexToAbgr(pal.skyTop);
-  const cMid = hexToAbgr(pal.skyMid);
-  const cBot = hexToAbgr(pal.skyBot);
-  const cGlow = hexToAbgr(pal.skyGlow);
-  const cCel = hexToAbgr(pal.celestialColor);
-  const cRing = hexToAbgr(pal.celestialRing);
-
-  // Authentic 16-bit stepped sky bands with crisp 2x2 Bayer dither transitions
-  for (let y = 0; y < 324; y++) {
-    for (let x = 0; x < 576; x++) {
-      let col = cTop;
-      if (y < 70) {
-        col = cTop;
-      } else if (y < 94) {
-        col = ((x + y) & 1) === 0 ? cTop : cMid;
-      } else if (y < 170) {
-        col = cMid;
-      } else if (y < 194) {
-        col = ((x + y) & 1) === 0 ? cMid : cBot;
-      } else if (y < 268) {
-        col = cBot;
-      } else if (y < 292) {
-        col = ((x + y) & 1) === 0 ? cBot : cGlow;
-      } else {
-        col = cGlow;
-      }
-      sky.px(x, y, col);
-    }
-  }
-
-  // Stars for dark/twilight biomes; fluffy pixel clouds for sunlit biomes
-  const isDay = pal.id === 'OPOUSO' || pal.id === 'TDM' || pal.id === 'DSI';
-  if (!isDay) {
-    for (let i = 0; i < 65; i++) {
-      const sx = hash2d(i, 1, pal.id.charCodeAt(0)) % 570;
-      const sy = hash2d(i, 2, pal.id.charCodeAt(1)) % 175;
-      const bright = (i & 3) === 0;
-      sky.px(sx, sy, bright ? cCel : cGlow);
-      if (bright) {
-        sky.px(sx - 1, sy, cRing);
-        sky.px(sx + 1, sy, cRing);
-        sky.px(sx, sy - 1, cRing);
-        sky.px(sx, sy + 1, cRing);
-      }
-    }
-  }
-
-  // Celestial orb (Sun / Crescent Moon / Volcanic Eclipse / Atomic Ring)
-  const celX = isDay ? 445 : 430;
-  const celY = isDay ? 66 : 62;
-  sky.ellipse(celX, celY, 26, 26, cRing);
-  sky.ellipse(celX, celY, 20, 20, cCel);
-  if (pal.id === 'EVIL') {
-    // Eclipse core
-    sky.ellipse(celX, celY, 15, 15, hexToAbgr(pal.skyTop));
-  } else if (pal.id === 'GSHIP' || pal.id === 'MLAIR') {
-    // Crescent shadow bite
-    sky.ellipse(celX + 8, celY - 4, 15, 15, cTop);
-  } else if (pal.id === 'TEMP') {
-    // Atomic rings around orb
-    for (let a = 0; a < 64; a++) {
-      const th = (a / 64) * Math.PI * 2;
-      sky.px(celX + Math.round(Math.cos(th) * 34), celY + Math.round(Math.sin(th) * 11), cRing);
-      sky.px(celX + Math.round(Math.cos(th) * 11), celY + Math.round(Math.sin(th) * 34), cRing);
-    }
-  }
-
-  // Pixelated horizon clouds for sunlit/desert/haven skies
-  if (isDay || pal.id === 'GSHIP') {
-    const cloudHi = isDay ? hexToAbgr(HIGHLIGHT_CREAM) : hexToAbgr(pal.skyGlow);
-    const cloudSh = isDay ? hexToAbgr(pal.skyBot) : hexToAbgr(pal.midSil);
-    const clouds = [
-      [70, 56, 30],
-      [215, 42, 36],
-      [350, 74, 24],
-      [510, 50, 28],
-    ] as const;
-    for (let i = 0; i < clouds.length; i++) {
-      const [cx, cy, r] = clouds[i]!;
-      sky.ellipse(cx, cy + 4, r, 10, cloudSh);
-      sky.ellipse(cx - 12, cy + 2, r * 0.6, 8, cloudSh);
-      sky.ellipse(cx + 14, cy + 2, r * 0.55, 8, cloudSh);
-      sky.ellipse(cx, cy, r * 0.9, 9, cloudHi);
-      sky.ellipse(cx - 12, cy - 2, r * 0.52, 7, cloudHi);
-      sky.ellipse(cx + 13, cy - 1, r * 0.48, 7, cloudHi);
-    }
-  }
-
-  // Layer 1: FAR silhouettes (288x200 seamless horizontal loop)
-  const far = new PixelBuf(288, 200);
-  const cFar = hexToAbgr(pal.farSil);
-  const cFarHi = hexToAbgr(pal.farHighlight);
-  const cAcc = hexToAbgr(pal.accent);
-  const cAcc2 = hexToAbgr(pal.accentAlt);
-
-  for (let x = 0; x < 288; x++) {
-    const t = (x / 288) * Math.PI * 2;
-    let ridgeY = 95;
-    if (pal.id === 'DSI') {
-      // Sharp pyramid silhouettes
-      const p1 = Math.abs(((x + 40) % 144) - 72);
-      const p2 = Math.abs(((x + 110) % 144) - 72);
-      ridgeY = Math.min(58 + p1 * 1.1, 74 + p2 * 0.95);
-    } else if (pal.id === 'ATVC') {
-      // Jagged volcanic peaks + crater dip
-      ridgeY = 72 + Math.round(Math.sin(t * 2) * 28 + Math.cos(t * 5) * 12);
-    } else if (pal.id === 'EVIL' || pal.id === 'TEMP' || pal.id === 'LAB') {
-      // Towering spires & ancient monolithic skyline
-      const tower = (x >> 4) % 3 === 0 ? 48 : (x >> 4) % 3 === 1 ? 84 : 66;
-      ridgeY = tower + ((x & 15) < 3 || (x & 15) > 12 ? 12 : 0);
-    } else if (pal.id === 'GSHIP') {
-      // Distant haunted ship sails on misty ocean horizon
-      ridgeY = 128 + Math.round(Math.sin(t * 4) * 4);
-    } else {
-      // Rolling pixel mountains
-      ridgeY = 76 + Math.round(Math.sin(t) * 24 + Math.sin(t * 3 + 1.1) * 14);
-    }
-    ridgeY = Math.max(24, Math.min(170, ridgeY | 0));
-    for (let y = ridgeY; y < 200; y++) {
-      far.px(x, y, y < ridgeY + 3 ? cFarHi : cFar);
-    }
-  }
-  if (pal.id === 'GSHIP') {
-    // Distant phantom clipper ship silhouette
-    far.rect(112, 118, 46, 12, cFar);
-    far.rect(134, 62, 3, 56, cFar);
-    far.tri(137, 68, 160, 96, 137, 108, cFarHi);
-    far.tri(134, 74, 115, 98, 134, 108, cFarHi);
-  }
-
-  // Layer 2: MID silhouettes (288x180 seamless loop)
-  const mid = new PixelBuf(288, 180);
-  const cMidSil = hexToAbgr(pal.midSil);
-  const cMidHi = hexToAbgr(pal.midHighlight);
-
-  for (let x = 0; x < 288; x++) {
-    const t = (x / 288) * Math.PI * 2;
-    const base = 104 + Math.round(Math.sin(t * 2 + 0.7) * 16 + Math.cos(t * 4) * 8);
-    for (let y = base; y < 180; y++) {
-      mid.px(x, y, y < base + 2 ? cMidHi : cMidSil);
-    }
-  }
-  // Biome-signature midground silhouettes
-  if (pal.id === 'OPOUSO') {
-    // Storybook village cottages & windmill silhouettes with warm lit windows
-    for (let i = 0; i < 4; i++) {
-      const hx = 24 + i * 72;
-      mid.rect(hx, 84, 28, 36, cMidSil);
-      mid.tri(hx - 4, 84, hx + 14, 66, hx + 32, 84, cMidHi);
-      mid.rect(hx + 6, 94, 5, 6, cAcc);
-      mid.rect(hx + 17, 94, 5, 6, cAcc);
-    }
-  } else if (pal.id === 'TDM' || pal.id === 'FLIN' || pal.id === 'AP') {
-    // Layered pixel pine/canopy trees & glowing toadstools
-    for (let i = 0; i < 7; i++) {
-      const tx = 14 + i * 42;
-      const th = 42 + ((i * 19) % 24);
-      const top = 112 - th;
-      mid.rect(tx - 3, top + 16, 6, 60, cMidSil);
-      mid.tri(tx - 16, top + 34, tx, top, tx + 16, top + 34, cMidSil);
-      mid.tri(tx - 12, top + 20, tx, top, tx + 12, top + 20, cMidHi);
-      if (pal.id === 'FLIN' || pal.id === 'AP') {
-        mid.ellipse(tx + 12, 108, 6, 4, cAcc);
-      }
-    }
-  } else if (pal.id === 'MLAIR' || pal.id === 'LAB') {
-    // Cavern stone arch pillars & glowing crystal stalactites
-    for (let i = 0; i < 4; i++) {
-      const px = 28 + i * 72;
-      mid.rect(px, 20, 14, 150, cMidSil);
-      mid.rect(px + 2, 20, 3, 150, cMidHi);
-      mid.tri(px + 24, 0, px + 30, 34, px + 36, 0, cMidSil);
-      mid.px(px + 6, 76, cAcc2);
-      mid.px(px + 7, 76, cAcc);
-    }
-  } else if (pal.id === 'ATVC') {
-    // Basalt columns with glowing lava waterfalls
-    for (let i = 0; i < 4; i++) {
-      const vx = 32 + i * 72;
-      mid.rect(vx, 72, 24, 108, cMidSil);
-      mid.rect(vx + 9, 76, 4, 104, cAcc2);
-      mid.rect(vx + 10, 76, 2, 104, cAcc);
-    }
-  } else if (pal.id === 'TEMP' || pal.id === 'EVIL') {
-    // Glowing monolith rings & runic pillars
-    for (let i = 0; i < 4; i++) {
-      const rx = 28 + i * 72;
-      mid.rect(rx, 50, 18, 130, cMidSil);
-      mid.rect(rx + 8, 60, 2, 90, cAcc2);
-      mid.ellipse(rx + 9, 44, 7, 7, cAcc);
-      mid.ellipse(rx + 9, 44, 4, 4, cMidSil);
-    }
-  } else if (pal.id === 'GSHIP') {
-    // Looming haunted ship masts & tattered ghostly sails
-    for (let i = 0; i < 2; i++) {
-      const mx = 68 + i * 144;
-      mid.rect(mx, 14, 5, 160, cMidSil);
-      mid.rect(mx - 34, 40, 72, 4, cMidSil);
-      mid.rect(mx - 28, 44, 60, 44, cMidHi);
-      mid.tri(mx - 20, 88, mx - 8, 68, mx + 2, 88, 0);
-    }
-  }
-
-  // Layer 3: NEAR atmospheric foliage/architecture strip (288x140 seamless loop)
-  const near = new PixelBuf(288, 140);
-  const cNear = hexToAbgr(pal.nearSil);
-  for (let x = 0; x < 288; x++) {
-    const t = (x / 288) * Math.PI * 2;
-    const h = 86 + Math.round(Math.sin(t * 3) * 14 + Math.cos(t * 7) * 6);
-    for (let y = h; y < 140; y++) {
-      near.px(x, y, cNear);
-    }
-  }
-
-  return {
-    sky: sky.toCanvas(),
-    far: far.toCanvas(),
-    mid: mid.toCanvas(),
-    near: near.toCanvas(),
-  };
-}
-
-// ============================================================================
-// Special Tiles (32x32 single & animated multi-frame)
-// ============================================================================
-
-function bakeSpecialTiles(): Map<string, HTMLCanvasElement> {
-  const map = new Map<string, HTMLCanvasElement>();
-  const cOut = hexToAbgr(OUTLINE_DARK);
-  const cWhite = hexToAbgr(HIGHLIGHT_CREAM);
-
-  // OneWay wooden-and-iron bridge plank
-  {
-    const b = new PixelBuf(32, 32);
-    const wHi = hexToAbgr('#e6a86a');
-    const wMid = hexToAbgr('#b8743b');
-    const wDark = hexToAbgr('#78421f');
-    const iron = hexToAbgr('#66748c');
-    b.rect(0, 1, 32, 10, wMid);
-    b.rect(0, 1, 32, 2, wHi);
-    b.rect(0, 9, 32, 2, wDark);
-    b.rect(0, 0, 32, 1, cOut);
-    b.rect(0, 11, 32, 1, cOut);
-    // Plank joints & iron bolts
-    for (let x = 0; x < 32; x += 8) {
-      b.rect(x, 1, 1, 10, wDark);
-      b.rect(x + 3, 4, 2, 2, iron);
-    }
-    // Support brackets underneath
-    b.tri(2, 12, 8, 12, 2, 18, wDark);
-    b.tri(30, 12, 24, 12, 30, 18, wDark);
-    b.outline(cOut);
-    map.set('oneway', b.toCanvas());
-  }
-
-  // Spikes (3 gleaming razor spikes)
-  {
-    const b = new PixelBuf(32, 32);
-    const steelHi = hexToAbgr('#f0f8ff');
-    const steelMid = hexToAbgr('#94a6bf');
-    const steelDark = hexToAbgr('#4e5a75');
-    const tipRed = hexToAbgr('#ff3868');
-    b.rect(1, 27, 30, 4, steelDark);
-    b.rect(1, 26, 30, 2, steelMid);
-    for (let i = 0; i < 3; i++) {
-      const sx = 5 + i * 11;
-      b.tri(sx - 4, 26, sx, 7, sx + 4, 26, steelDark);
-      b.tri(sx - 3, 26, sx, 9, sx, 26, steelHi);
-      b.tri(sx, 26, sx, 9, sx + 3, 26, steelMid);
-      b.rect(sx - 1, 8, 2, 3, tipRed);
-      b.px(sx, 7, cWhite);
-    }
-    b.outline(cOut);
-    map.set('spike', b.toCanvas());
-  }
-
-  // Breakable cracked crate
-  {
-    const b = new PixelBuf(32, 32);
-    const hi = hexToAbgr('#f2b66d');
-    const mid = hexToAbgr('#c97c3a');
-    const dark = hexToAbgr('#82441c');
-    b.rect(1, 1, 30, 30, mid);
-    b.rect(1, 1, 30, 3, hi);
-    b.rect(1, 1, 3, 30, hi);
-    b.rect(1, 28, 30, 3, dark);
-    b.rect(28, 1, 3, 30, dark);
-    b.rect(5, 5, 22, 22, dark);
-    b.rect(6, 6, 20, 20, mid);
-    // Diagonal X brace + fracture cracks
-    b.line(6, 6, 25, 25, hi);
-    b.line(6, 7, 24, 25, dark);
-    b.line(25, 6, 6, 25, hi);
-    b.line(15, 7, 13, 14, cOut);
-    b.line(13, 14, 18, 21, cOut);
-    b.line(18, 21, 16, 25, cOut);
-    b.outline(cOut);
-    map.set('breakable', b.toCanvas());
-  }
-
-  // StoneOverhead (Heavy carved boulder smashable by Rock Uppercut!)
-  {
-    const b = new PixelBuf(32, 32);
-    const sHi = hexToAbgr('#b8b2cc');
-    const sMid = hexToAbgr('#787294');
-    const sDark = hexToAbgr('#494366');
-    const gold = hexToAbgr('#ffad16');
-    const goldHi = hexToAbgr('#ffe7a1');
-    b.rect(1, 1, 30, 30, sMid);
-    b.rect(2, 2, 28, 3, sHi);
-    b.rect(2, 27, 28, 3, sDark);
-    b.rect(27, 2, 3, 28, sDark);
-    // Glowing upward chevron rock rune signaling Rock Uppercut
-    b.line(10, 20, 16, 11, gold);
-    b.line(16, 11, 22, 20, gold);
-    b.line(10, 19, 16, 10, goldHi);
-    b.line(16, 10, 22, 19, goldHi);
-    // Fracture lines
-    b.line(4, 12, 10, 15, cOut);
-    b.line(27, 18, 21, 22, cOut);
-    b.outline(cOut);
-    map.set('stone_overhead', b.toCanvas());
-  }
-
-  // Rubber Bounce pad (2 frames: idle & stretched)
-  {
-    const sheet = new PixelBuf(64, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const bHi = hexToAbgr('#ff99e8');
-    const bMid = hexToAbgr('#ff38a8');
-    const bDark = hexToAbgr('#9e146b');
-    const gold = hexToAbgr('#ffd84d');
-    const coil = hexToAbgr('#9eb2cc');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      const squash = f === 1 ? 3 : 0;
-      // Base plate + springs
-      fBuf.rect(4, 26, 24, 5, hexToAbgr('#4e4666'));
-      fBuf.line(9, 26, 13, 18 + squash, coil);
-      fBuf.line(23, 26, 19, 18 + squash, coil);
-      // Bouncy glossy mushroom cap
-      fBuf.ellipseShaded(16, 14 + squash, 14, 8 - squash * 0.4, bHi, bMid, bDark, cWhite);
-      fBuf.rect(8, 12 + squash, 16, 2, gold);
-      fBuf.outline(cOut);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('bounce', sheet.toCanvas());
-  }
-
-  // Slippery Vine rail
-  {
-    const b = new PixelBuf(32, 32);
-    const vHi = hexToAbgr('#7aff66');
-    const vMid = hexToAbgr('#2db84c');
-    const vDark = hexToAbgr('#176e38');
-    const berry = hexToAbgr('#ff4da6');
-    for (let y = 0; y < 32; y++) {
-      const x = 15 + Math.round(Math.sin((y / 32) * Math.PI * 2) * 3);
-      b.rect(x - 2, y, 5, 1, vMid);
-      b.px(x - 1, y, vHi);
-      b.px(x + 2, y, vDark);
-    }
-    // Crisp sprouting leaves & berries
-    b.ellipse(9, 9, 5, 3, vHi);
-    b.ellipse(23, 21, 5, 3, vMid);
-    b.ellipse(12, 25, 2, 2, berry);
-    b.ellipse(20, 12, 2, 2, berry);
-    b.outline(cOut);
-    map.set('vine', b.toCanvas());
-  }
-
-  // Acid (4 frames bubbling toxic waves)
-  {
-    const sheet = new PixelBuf(128, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const foam = hexToAbgr('#d6ff7a');
-    const hi = hexToAbgr('#78ff30');
-    const mid = hexToAbgr('#35bf24');
-    const dark = hexToAbgr('#1a7020');
-    for (let f = 0; f < 4; f++) {
-      fBuf.clear();
-      for (let x = 0; x < 32; x++) {
-        const wave = 4 + Math.round(Math.sin(((x + f * 8) / 32) * Math.PI * 2) * 2.2);
-        fBuf.px(x, wave - 1, cOut);
-        fBuf.px(x, wave, foam);
-        fBuf.px(x, wave + 1, hi);
-        for (let y = wave + 2; y < 32; y++) {
-          fBuf.px(x, y, y < 16 ? mid : dark);
-        }
-      }
-      // Rising pixel bubbles
-      const bx = (6 + f * 7) % 24 + 4;
-      const by = 24 - f * 4;
-      fBuf.ellipse(bx, by, 2.5, 2.5, foam);
-      fBuf.px(bx, by, hi);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('acid', sheet.toCanvas());
-  }
-
-  // Lava (4 frames glowing molten waves)
-  {
-    const sheet = new PixelBuf(128, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const hot = hexToAbgr('#fff799');
-    const hi = hexToAbgr('#ffaa1d');
-    const mid = hexToAbgr('#e84514');
-    const dark = hexToAbgr('#8f141c');
-    for (let f = 0; f < 4; f++) {
-      fBuf.clear();
-      for (let x = 0; x < 32; x++) {
-        const wave = 4 + Math.round(Math.sin(((x + f * 8) / 32) * Math.PI * 2) * 2.2);
-        fBuf.px(x, wave - 1, cOut);
-        fBuf.px(x, wave, hot);
-        fBuf.px(x, wave + 1, hi);
-        for (let y = wave + 2; y < 32; y++) {
-          fBuf.px(x, y, y < 14 ? hi : y < 23 ? mid : dark);
-        }
-      }
-      const bx = (10 + f * 6) % 24 + 4;
-      const by = 22 - f * 3;
-      fBuf.ellipse(bx, by, 3, 2, hot);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('lava', sheet.toCanvas());
-  }
-
-  // Quicksand (2 frames rippling golden strata)
-  {
-    const sheet = new PixelBuf(64, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const hi = hexToAbgr('#ffe79e');
-    const mid = hexToAbgr('#db9e44');
-    const dark = hexToAbgr('#9c5f24');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      for (let y = 0; y < 32; y++) {
-        for (let x = 0; x < 32; x++) {
-          const shift = ((y >> 2) + f * 4) * 3;
-          const wave = ((x + shift) % 12) < 4;
-          fBuf.px(x, y, y < 3 ? hi : wave ? mid : dark);
-        }
-      }
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('quicksand', sheet.toCanvas());
-  }
-
-  // Crumble fragile platform
-  {
-    const b = new PixelBuf(32, 32);
-    const hi = hexToAbgr('#dec7ab');
-    const mid = hexToAbgr('#a8876d');
-    const dark = hexToAbgr('#664a3e');
-    b.rect(2, 2, 28, 22, mid);
-    b.rect(2, 2, 28, 3, hi);
-    b.rect(2, 21, 28, 3, dark);
-    // Heavy cracks + falling dust pebbles
-    b.line(9, 2, 13, 12, cOut);
-    b.line(13, 12, 10, 23, cOut);
-    b.line(22, 3, 18, 15, cOut);
-    b.line(18, 15, 24, 22, cOut);
-    b.rect(7, 27, 3, 3, dark);
-    b.rect(18, 28, 2, 2, mid);
-    b.rect(24, 26, 3, 2, dark);
-    b.outline(cOut);
-    map.set('crumble', b.toCanvas());
-  }
-
-  // Explosive TNT/Bomb block (2 pulsing frames)
-  {
-    const sheet = new PixelBuf(64, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const rHi = hexToAbgr('#ff7070');
-    const rMid = hexToAbgr('#d91c36');
-    const rDark = hexToAbgr('#7a0c24');
-    const yel = hexToAbgr('#ffe640');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      fBuf.rect(2, 2, 28, 28, rMid);
-      fBuf.rect(2, 2, 28, 3, rHi);
-      fBuf.rect(2, 27, 28, 3, rDark);
-      // Hazard band
-      fBuf.rect(2, 11, 28, 10, f === 0 ? yel : cWhite);
-      fBuf.rect(12, 13, 8, 6, rDark);
-      // Star spark emblem
-      fBuf.px(16, 15, yel);
-      fBuf.px(15, 16, yel);
-      fBuf.px(17, 16, yel);
-      fBuf.outline(cOut);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('explosive', sheet.toCanvas());
-  }
-
-  // Antigrav emitter (2 frames)
-  {
-    const sheet = new PixelBuf(64, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const vHi = hexToAbgr('#c79eff');
-    const vMid = hexToAbgr('#7838e6');
-    const cy = hexToAbgr('#66f7ff');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      const oy = f === 0 ? 0 : -3;
-      fBuf.line(8, 22 + oy, 16, 14 + oy, cy);
-      fBuf.line(16, 14 + oy, 24, 22 + oy, cy);
-      fBuf.line(10, 14 + oy, 16, 8 + oy, vHi);
-      fBuf.line(16, 8 + oy, 22, 14 + oy, vHi);
-      fBuf.ellipse(16, 26, 6, 3, vMid);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('antigrav', sheet.toCanvas());
-  }
-
-  // Wind streams (up / left / right, 4 frames)
-  const windCol1 = hexToAbgr('#e0ffff', 175);
-  const windCol2 = hexToAbgr('#8cebff', 120);
-  for (const dir of ['wind_up', 'wind_left', 'wind_right'] as const) {
-    const sheet = new PixelBuf(128, 32);
-    const fBuf = new PixelBuf(32, 32);
-    for (let f = 0; f < 4; f++) {
-      fBuf.clear();
-      const off = f * 8;
-      if (dir === 'wind_up') {
-        for (let s = 0; s < 3; s++) {
-          const sx = 6 + s * 10;
-          const sy = (32 - ((off + s * 11) % 32)) % 32;
-          for (let k = 0; k < 10; k++) {
-            fBuf.px(sx + (k > 5 ? 1 : 0), (sy + k) % 32, k < 4 ? windCol1 : windCol2);
-          }
-        }
-      } else {
-        const sign = dir === 'wind_right' ? 1 : -1;
-        for (let s = 0; s < 3; s++) {
-          const sy = 6 + s * 10;
-          const sx = (32 + sign * ((off + s * 11) % 32)) % 32;
-          for (let k = 0; k < 11; k++) {
-            fBuf.px((sx + k) % 32, sy, k < 4 ? windCol1 : windCol2);
-          }
-        }
-      }
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set(dir, sheet.toCanvas());
-  }
-
-  // Secret wall telltale shimmer crack overlay
-  {
-    const b = new PixelBuf(32, 32);
-    const crack = hexToAbgr('#ffe6ff', 145);
-    b.line(12, 4, 16, 13, crack);
-    b.line(16, 13, 13, 20, crack);
-    b.line(13, 20, 19, 27, crack);
-    map.set('secret_crack', b.toCanvas());
-  }
-
-  // Moving platform tile (32x16)
-  {
-    const b = new PixelBuf(32, 16);
-    const hi = hexToAbgr('#ffd67a');
-    const mid = hexToAbgr('#c78338');
-    const dark = hexToAbgr('#6e3f1c');
-    const cyan = hexToAbgr('#59f2ff');
-    b.rect(1, 1, 30, 14, mid);
-    b.rect(1, 1, 30, 3, hi);
-    b.rect(1, 12, 30, 3, dark);
-    b.rect(6, 6, 4, 4, cyan);
-    b.rect(22, 6, 4, 4, cyan);
-    b.outline(cOut);
-    map.set('moving_platform', b.toCanvas());
-  }
-
-  // Crusher block (32x32 angry iron block with underside teeth)
-  {
-    const b = new PixelBuf(32, 32);
-    const hi = hexToAbgr('#949eb8');
-    const mid = hexToAbgr('#58607a');
-    const dark = hexToAbgr('#30354a');
-    const eye = hexToAbgr('#ff3858');
-    b.rect(2, 2, 28, 24, mid);
-    b.rect(2, 2, 28, 3, hi);
-    b.rect(2, 23, 28, 3, dark);
-    b.rect(8, 10, 5, 4, eye);
-    b.rect(19, 10, 5, 4, eye);
-    b.tri(4, 26, 8, 31, 12, 26, hi);
-    b.tri(12, 26, 16, 31, 20, 26, hi);
-    b.tri(20, 26, 24, 31, 28, 26, hi);
-    b.outline(cOut);
-    map.set('crusher', b.toCanvas());
-  }
-
-  return map;
-}
-
-// ============================================================================
-// Props, Totems, Chests, Teleporters, Collectibles & Hub NPCs
-// ============================================================================
-
-function bakeProps(): Map<string, HTMLCanvasElement> {
-  const map = new Map<string, HTMLCanvasElement>();
-  const cOut = hexToAbgr(OUTLINE_DARK);
-  const cWhite = hexToAbgr(HIGHLIGHT_CREAM);
-
-  // Volt Node (2 frames, 32x32)
-  {
-    const sheet = new PixelBuf(64, 32);
-    const fBuf = new PixelBuf(32, 32);
-    const vHi = hexToAbgr('#c2ffff');
-    const vMid = hexToAbgr('#2be8ff');
-    const vYel = hexToAbgr('#f2ff38');
-    const metal = hexToAbgr('#4e5d75');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      // Orbiting electric arc pixels
-      const rot = f === 0 ? 0 : 1;
-      fBuf.ellipse(16, 16, 12, 12, vMid);
-      fBuf.ellipse(16, 16, 10, 10, 0);
-      fBuf.ellipseShaded(16, 16, 7.5, 7.5, vHi, vMid, metal, cWhite);
-      // Lightning bolt emblem inside core
-      fBuf.line(17, 11, 14, 16, vYel);
-      fBuf.line(14, 16, 18, 16, vYel);
-      fBuf.line(18, 16, 15, 21, vYel);
-      // Spark prongs
-      fBuf.rect(15, 2 + rot, 2, 3, vYel);
-      fBuf.rect(15, 27 - rot, 2, 3, vYel);
-      fBuf.rect(2 + rot, 15, 3, 2, vYel);
-      fBuf.rect(27 - rot, 15, 3, 2, vYel);
-      fBuf.outline(cOut);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('volt_node', sheet.toCanvas());
-  }
-
-  // Chest (closed & open, 32x28)
-  {
-    const woodHi = hexToAbgr('#e39c52');
-    const woodMid = hexToAbgr('#a85d28');
-    const woodDark = hexToAbgr('#663116');
-    const gold = hexToAbgr('#ffd84d');
-    const ruby = hexToAbgr('#ff3366');
-
-    const closed = new PixelBuf(32, 28);
-    closed.rect(3, 8, 26, 18, woodMid);
-    closed.rect(3, 8, 26, 4, woodHi);
-    closed.rect(3, 22, 26, 4, woodDark);
-    closed.rect(3, 14, 26, 2, gold);
-    closed.rect(7, 8, 2, 18, gold);
-    closed.rect(23, 8, 2, 18, gold);
-    closed.rect(13, 12, 6, 6, gold);
-    closed.rect(15, 14, 2, 2, ruby);
-    closed.outline(cOut);
-    map.set('chest_closed', closed.toCanvas());
-
-    const open = new PixelBuf(32, 28);
-    open.rect(3, 14, 26, 12, woodMid);
-    open.rect(3, 22, 26, 4, woodDark);
-    open.rect(4, 3, 24, 9, woodDark);
-    open.rect(5, 4, 22, 3, woodHi);
-    open.rect(5, 12, 22, 3, gold);
-    open.rect(13, 14, 6, 4, gold);
-    open.outline(cOut);
-    map.set('chest_open', open.toCanvas());
-  }
-
-  // Teleporter Gate (2 frames, 40x48)
-  {
-    const sheet = new PixelBuf(80, 48);
-    const fBuf = new PixelBuf(40, 48);
-    const stHi = hexToAbgr('#a8b0d4');
-    const stMid = hexToAbgr('#636a91');
-    const stDark = hexToAbgr('#393d5e');
-    const pCyan = hexToAbgr('#59f2ff');
-    const pMag = hexToAbgr('#d44dff');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      // Stone portal arch
-      fBuf.rect(4, 42, 32, 5, stDark);
-      fBuf.rect(6, 10, 6, 33, stMid);
-      fBuf.rect(28, 10, 6, 33, stMid);
-      fBuf.rect(6, 6, 28, 6, stHi);
-      // Swirling arcane core
-      fBuf.ellipse(20, 26, 9, 13, f === 0 ? pMag : pCyan);
-      fBuf.ellipse(20, 26, 6, 9, f === 0 ? pCyan : pMag);
-      fBuf.ellipse(20, 26, 3, 5, cWhite);
-      fBuf.outline(cOut);
-      sheet.blit(fBuf, f * 40, 0);
-    }
-    map.set('teleporter', sheet.toCanvas());
-  }
-
-  // Save Shrine (2 frames, 32x40)
-  {
-    const sheet = new PixelBuf(64, 40);
-    const fBuf = new PixelBuf(32, 40);
-    const st = hexToAbgr('#7880a6');
-    const stHi = hexToAbgr('#b8c0e6');
-    const flame = hexToAbgr('#ffd84d');
-    const flameHot = hexToAbgr('#fff8c4');
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      fBuf.rect(6, 32, 20, 6, st);
-      fBuf.rect(10, 18, 12, 15, stHi);
-      fBuf.rect(12, 20, 8, 11, st);
-      const oy = f === 0 ? 0 : -2;
-      fBuf.tri(11, 15 + oy, 16, 4 + oy, 21, 15 + oy, flame);
-      fBuf.tri(13, 14 + oy, 16, 7 + oy, 19, 14 + oy, flameHot);
-      fBuf.outline(cOut);
-      sheet.blit(fBuf, f * 32, 0);
-    }
-    map.set('save_shrine', sheet.toCanvas());
-  }
-
-  // Signpost (24x28)
-  {
-    const b = new PixelBuf(24, 28);
-    const wHi = hexToAbgr('#e6ac6e');
-    const wMid = hexToAbgr('#ad6e39');
-    const wDark = hexToAbgr('#6b3d1d');
-    b.rect(10, 13, 4, 14, wDark);
-    b.rect(3, 4, 18, 11, wMid);
-    b.rect(3, 4, 18, 2, wHi);
-    b.rect(6, 8, 12, 1, wDark);
-    b.rect(6, 11, 9, 1, wDark);
-    b.outline(cOut);
-    map.set('signpost', b.toCanvas());
-  }
-
-  // Animal House (48x44 cozy storybook cottage)
-  {
-    const b = new PixelBuf(48, 44);
-    const roofHi = hexToAbgr('#ff7088');
-    const roofMid = hexToAbgr('#cc3355');
-    const wall = hexToAbgr('#f0d9b8');
-    const wallSh = hexToAbgr('#c29f78');
-    const door = hexToAbgr('#784222');
-    const win = hexToAbgr('#ffe866');
-    b.rect(8, 20, 32, 22, wall);
-    b.rect(8, 37, 32, 5, wallSh);
-    b.tri(3, 21, 24, 4, 45, 21, roofMid);
-    b.tri(7, 19, 24, 6, 36, 19, roofHi);
-    b.rect(19, 28, 10, 14, door);
-    b.rect(11, 25, 6, 6, win);
-    b.rect(31, 25, 6, 6, win);
-    b.outline(cOut);
-    map.set('animal_house', b.toCanvas());
-  }
-
-  // Target Switch (2 frames, 24x24)
-  {
-    const sheet = new PixelBuf(48, 24);
-    const fBuf = new PixelBuf(24, 24);
-    for (let f = 0; f < 2; f++) {
-      fBuf.clear();
-      fBuf.ellipseShaded(
-        12,
-        12,
-        9,
-        9,
-        hexToAbgr(f === 0 ? '#ff6680' : '#7aff80'),
-        hexToAbgr(f === 0 ? '#cc1f3d' : '#2db84c'),
-        hexToAbgr('#4a1428'),
-      );
-      fBuf.ellipse(12, 12, 4, 4, cWhite);
-      fBuf.ellipse(12, 12, 2, 2, hexToAbgr(f === 0 ? '#ff3355' : '#26e659'));
-      fBuf.outline(cOut);
-      sheet.blit(fBuf, f * 24, 0);
-    }
-    map.set('target_switch', sheet.toCanvas());
-  }
-
-  // Locked Target Door & Coin Door (32x64)
-  for (const kind of ['door_locked', 'coin_door'] as const) {
-    const b = new PixelBuf(32, 64);
-    const metal = hexToAbgr(kind === 'coin_door' ? '#b87c24' : '#585c78');
-    const hi = hexToAbgr(kind === 'coin_door' ? '#ffd84d' : '#949cc4');
-    const dark = hexToAbgr(kind === 'coin_door' ? '#6e3f0e' : '#2e3047');
-    b.rect(3, 2, 26, 60, metal);
-    b.rect(3, 2, 26, 4, hi);
-    b.rect(3, 58, 26, 4, dark);
-    b.rect(7, 8, 18, 48, dark);
-    b.rect(9, 10, 14, 44, metal);
-    b.ellipse(16, 32, 6, 6, hi);
-    b.ellipse(16, 32, 3, 3, dark);
-    b.outline(cOut);
-    map.set(kind, b.toCanvas());
-  }
-
-  // Form Totems (all 6 forms, 36x44)
-  for (let i = 0; i < HERO_FORMS.length; i++) {
-    const form = HERO_FORMS[i]!;
-    const pal = HERO_FORM_PALETTES[form];
-    const b = new PixelBuf(36, 44);
-    const stHi = hexToAbgr('#aba4c7');
-    const stMid = hexToAbgr('#6f688c');
-    const stDark = hexToAbgr('#3f3859');
-    b.rect(6, 36, 24, 6, stDark);
-    b.rect(9, 20, 18, 17, stMid);
-    b.rect(10, 20, 16, 3, stHi);
-    b.ellipseShaded(18, 12, 9, 9, hexToAbgr(pal[4]), hexToAbgr(pal[0]), hexToAbgr(pal[2]), cWhite);
-    b.outline(cOut);
-    map.set(`totem_${form}`, b.toCanvas());
-  }
-
-  return map;
-}
-
-function bakeHubNpcs(): Map<ShopId, HTMLCanvasElement> {
-  const map = new Map<ShopId, HTMLCanvasElement>();
-  const cOut = hexToAbgr(OUTLINE_DARK);
-  const cWhite = hexToAbgr(HIGHLIGHT_CREAM);
-
-  const npcSpecs: ReadonlyArray<{
-    id: ShopId;
-    cloakHi: string;
-    cloakMid: string;
-    cloakDark: string;
-    skin: string;
-    accent: string;
-    hat: 'hood' | 'sage' | 'goggles' | 'helm' | 'tricorn' | 'tome';
-  }> = [
-    {
-      id: 'vespera',
-      cloakHi: '#b85eff',
-      cloakMid: '#7629bf',
-      cloakDark: '#3f126e',
-      skin: '#ffd9cc',
-      accent: '#ff427a',
-      hat: 'hood',
-    },
-    {
-      id: 'orla',
-      cloakHi: '#59e888',
-      cloakMid: '#249e58',
-      cloakDark: '#125436',
-      skin: '#ffe0bd',
-      accent: '#ffd84d',
-      hat: 'sage',
-    },
-    {
-      id: 'barnaby',
-      cloakHi: '#ffad4d',
-      cloakMid: '#cc6f24',
-      cloakDark: '#733512',
-      skin: '#ffd4b8',
-      accent: '#59f2ff',
-      hat: 'goggles',
-    },
-    {
-      id: 'garron',
-      cloakHi: '#ff5268',
-      cloakMid: '#bd1e38',
-      cloakDark: '#690d22',
-      skin: '#e6b899',
-      accent: '#ffd84d',
-      hat: 'helm',
-    },
-    {
-      id: 'barnacle',
-      cloakHi: '#5effcf',
-      cloakMid: '#24a891',
-      cloakDark: '#125259',
-      skin: '#94ffe6',
-      accent: '#ffd84d',
-      hat: 'tricorn',
-    },
-    {
-      id: 'codex',
-      cloakHi: '#ffe066',
-      cloakMid: '#d9961f',
-      cloakDark: '#7d440c',
-      skin: '#fff5d6',
-      accent: '#59f2ff',
-      hat: 'tome',
-    },
-  ];
-
-  for (let i = 0; i < npcSpecs.length; i++) {
-    const spec = npcSpecs[i]!;
-    const sheet = new PixelBuf(72, 40);
-    const b = new PixelBuf(36, 40);
-    const hi = hexToAbgr(spec.cloakHi);
-    const mid = hexToAbgr(spec.cloakMid);
-    const dark = hexToAbgr(spec.cloakDark);
-    const skin = hexToAbgr(spec.skin);
-    const acc = hexToAbgr(spec.accent);
-
-    for (let f = 0; f < 2; f++) {
-      b.clear();
-      const bob = f === 1 ? 1 : 0;
-
-      if (spec.hat === 'tome') {
-        // Floating sentient golden grimoire Codex!
-        const hover = f === 0 ? 0 : -2;
-        b.rect(8, 12 + hover, 20, 20, mid);
-        b.rect(10, 14 + hover, 16, 16, skin);
-        b.rect(8, 12 + hover, 4, 20, dark);
-        b.rect(9, 12 + hover, 18, 2, hi);
-        // Glowing wise eyes on book cover
-        b.rect(13, 19 + hover, 3, 4, acc);
-        b.rect(20, 19 + hover, 3, 4, acc);
-        b.px(14, 20 + hover, cWhite);
-        b.px(21, 20 + hover, cWhite);
-        // Fluttering bookmark ribbon
-        b.tri(18, 32 + hover, 15, 38, 21, 36, hexToAbgr('#ff3868'));
-      } else {
-        // Body cloak
-        b.ellipseShaded(18, 28 + bob, 9.5, 9, hi, mid, dark);
-        // Head
-        b.ellipseShaded(18, 16 + bob, 7.5, 7, cWhite, skin, dark);
-        // Eyes
-        b.rect(14, 15 + bob, 2, 3, cOut);
-        b.rect(20, 15 + bob, 2, 3, cOut);
-        b.px(14, 15 + bob, cWhite);
-        b.px(20, 15 + bob, cWhite);
-
-        // Signature headgear & prop
-        if (spec.hat === 'hood') {
-          b.tri(9, 16 + bob, 18, 4 + bob, 27, 16 + bob, mid);
-          b.tri(11, 15 + bob, 18, 6 + bob, 23, 15 + bob, hi);
-          // Heart crystal staff
-          b.line(29, 10, 29, 37, dark);
-          b.ellipse(29, 9 + bob, 3.5, 3.5, acc);
-        } else if (spec.hat === 'sage') {
-          b.tri(8, 13 + bob, 18, 3 + bob, 28, 13 + bob, dark);
-          b.rect(9, 11 + bob, 18, 3, acc);
-          b.ellipse(29, 20 + bob, 4, 4, acc);
-        } else if (spec.hat === 'goggles') {
-          // Oversized relic backpack + round goggles
-          b.ellipseShaded(9, 26 + bob, 6, 8, hi, mid, dark);
-          b.rect(12, 11 + bob, 12, 4, dark);
-          b.rect(13, 12 + bob, 4, 2, acc);
-          b.rect(19, 12 + bob, 4, 2, acc);
-        } else if (spec.hat === 'helm') {
-          // Horned arena champion helm
-          b.rect(11, 9 + bob, 14, 6, mid);
-          b.tri(11, 11 + bob, 6, 4 + bob, 13, 9 + bob, acc);
-          b.tri(25, 11 + bob, 30, 4 + bob, 23, 9 + bob, acc);
-          b.rect(28, 12, 3, 24, dark);
-          b.tri(27, 11, 34, 15, 27, 20, hi);
-        } else if (spec.hat === 'tricorn') {
-          // Spectral pirate captain hat + beard
-          b.tri(6, 12 + bob, 18, 5 + bob, 30, 12 + bob, dark);
-          b.rect(9, 11 + bob, 18, 2, acc);
-          b.tri(13, 21 + bob, 18, 28 + bob, 23, 21 + bob, hi);
-        }
-      }
-      b.outline(cOut);
-      sheet.blit(b, f * 36, 0);
-    }
-    map.set(spec.id, sheet.toCanvas());
-  }
-
-  return map;
-}
+// Biome tilesets, deco, parallax, special tiles, props & Hub NPCs are delegated to BiomeArtBaker.ts
 
 function bakeCollectibles(): Map<string, HTMLCanvasElement> {
   const map = new Map<string, HTMLCanvasElement>();
   const cOut = hexToAbgr(OUTLINE_DARK);
   const cWhite = hexToAbgr(HIGHLIGHT_CREAM);
 
-  // Coin (4 frames spinning 20x20)
+  // Coin (4 frames spinning smiling golden medallion 20x20)
   {
     const sheet = new PixelBuf(80, 20);
     const b = new PixelBuf(20, 20);
     const hi = hexToAbgr(UI_COLORS.coinLight);
     const mid = hexToAbgr(UI_COLORS.coinMid);
     const dark = hexToAbgr(UI_COLORS.coinDark);
-    const widths = [7.5, 5.5, 2.5, 5.5] as const;
+    const deep = hexToAbgr(UI_COLORS.coinDeep);
+    const widths = [7.8, 5.8, 2.8, 5.8] as const;
     for (let f = 0; f < 4; f++) {
       b.clear();
       const rx = widths[f]!;
-      b.ellipseShaded(10, 10, rx, 7.5, hi, mid, dark, cWhite);
-      if (rx >= 5) {
+      b.ellipseShaded(10, 10, rx, 7.8, hi, mid, dark, cWhite);
+      if (rx >= 7) {
+        // Charming embossed eyes + toothy grin inside golden medallion
+        b.rect(7, 6, 2, 3, hi);
+        b.rect(11, 6, 2, 3, hi);
+        b.px(7, 8, deep);
+        b.px(11, 8, deep);
+        b.rect(7, 11, 6, 3, deep);
+        b.rect(8, 11, 2, 1, hi);
+        b.rect(11, 11, 2, 1, hi);
+      } else if (rx >= 5) {
         b.rect(9, 6, 2, 8, hi);
         b.px(9, 7, cWhite);
       }
@@ -2091,53 +1063,66 @@ function bakeCollectibles(): Map<string, HTMLCanvasElement> {
     );
   }
 
-  // RockShield & MagicShield icons (14x14)
+  // RockShield & MagicShield heart icons (14x14)
   {
     const b = new PixelBuf(14, 14);
-    b.rect(2, 2, 10, 6, hexToAbgr(UI_COLORS.shieldMid));
-    b.rect(2, 2, 10, 2, hexToAbgr(UI_COLORS.shieldLight));
-    b.tri(2, 8, 12, 8, 7, 12.5, hexToAbgr(UI_COLORS.shieldDark));
-    b.rect(6, 4, 2, 4, hexToAbgr(UI_COLORS.shieldGem));
+    b.ellipse(4.5, 5, 3.2, 3.0, hexToAbgr('#788276'));
+    b.ellipse(9.5, 5, 3.2, 3.0, hexToAbgr('#788276'));
+    b.tri(1.5, 6, 12.5, 6, 7, 12.5, hexToAbgr('#586157'));
+    b.line(7, 4, 7, 11, hexToAbgr('#343b34'));
+    b.px(4, 4, hexToAbgr('#b4bfb2'));
+    b.px(5, 4, hexToAbgr('#b4bfb2'));
     b.outline(cOut);
     map.set('rock_shield', b.toCanvas());
 
     const m = new PixelBuf(14, 14);
-    m.rect(2, 2, 10, 6, hexToAbgr(UI_COLORS.magicShield));
-    m.tri(2, 8, 12, 8, 7, 12.5, hexToAbgr('#2299cc'));
-    m.rect(5, 4, 4, 3, cWhite);
+    m.ellipse(4.5, 5, 3.2, 3.0, hexToAbgr(UI_COLORS.magicShield));
+    m.ellipse(9.5, 5, 3.2, 3.0, hexToAbgr(UI_COLORS.magicShield));
+    m.tri(1.5, 6, 12.5, 6, 7, 12.5, hexToAbgr('#3899cc'));
+    m.line(7, 4, 7, 11, hexToAbgr('#1f5a80'));
+    m.rect(3, 3, 3, 2, cWhite);
+    m.rect(8, 3, 3, 2, cWhite);
     m.outline(cOut);
     map.set('magic_shield', m.toCanvas());
   }
 
-  // Elemental Form Emblem Badges (12x12 each)
+  // Elemental Form Emblem Badges (12x12 each — iconic silhouettes!)
   for (let i = 0; i < HERO_FORMS.length; i++) {
     const form = HERO_FORMS[i]!;
     const pal = HERO_FORM_PALETTES[form];
     const b = new PixelBuf(12, 12);
     const c0 = hexToAbgr(pal[0]);
     const c2 = hexToAbgr(pal[2]);
+    const c3 = hexToAbgr(pal[3]);
     const c4 = hexToAbgr(pal[4]);
     if (form === 'krunk_basic') {
-      b.ellipse(6, 7, 4, 3.5, c0);
-      b.tri(2, 5, 1, 1, 5, 4, c4);
-      b.tri(10, 5, 11, 1, 7, 4, c4);
+      b.rect(2, 2, 8, 7, c0);
+      b.rect(5, 2, 2, 2, 0);
+      b.ellipse(6, 8, 3, 2, c3);
+      b.px(4, 4, cOut);
+      b.px(7, 4, cOut);
     } else if (form === 'krunk_fire') {
-      b.tri(2, 10, 6, 1, 10, 10, c0);
-      b.tri(4, 10, 6, 4, 8, 10, c4);
+      b.tri(2, 10, 4, 2, 7, 10, c0);
+      b.tri(5, 10, 8, 2, 10, 10, c0);
+      b.tri(4, 10, 6, 5, 8, 10, hexToAbgr('#ffec42'));
     } else if (form === 'krunk_leaf') {
       b.ellipse(6, 6, 4.5, 3, c0);
       b.line(2, 9, 9, 3, c4);
+      b.px(9, 2, hexToAbgr('#b8681c'));
     } else if (form === 'krunk_rock') {
       b.rect(2, 3, 8, 7, c0);
-      b.rect(3, 4, 6, 2, c4);
-      b.rect(5, 6, 2, 2, hexToAbgr(pal[5]));
+      b.rect(2, 3, 8, 2, hexToAbgr(pal[5]));
+      b.rect(4, 7, 4, 2, hexToAbgr('#78828a'));
     } else if (form === 'krunk_electric') {
-      b.line(7, 1, 3, 6, c0);
-      b.line(3, 6, 8, 6, c4);
-      b.line(8, 6, 4, 10, c0);
+      b.ellipse(6, 5, 4.5, 3, hexToAbgr('#e64518'));
+      b.rect(2, 6, 8, 4, c0);
+      b.rect(4, 8, 4, 2, c4);
     } else {
-      b.ellipse(6, 6, 4.5, 4.5, c2);
-      b.ellipse(6, 6, 2.2, 2.2, c4);
+      b.tri(1, 5, 6, 2, 11, 5, c2);
+      b.rect(3, 4, 6, 6, c0);
+      b.px(4, 6, c4);
+      b.px(7, 6, c4);
+      b.rect(4, 8, 4, 2, c4);
     }
     b.outline(cOut);
     map.set(`form_icon_${form}`, b.toCanvas());
@@ -2154,6 +1139,7 @@ function bakeProjectiles(): Map<ProjectileRuntime['kind'], HTMLCanvasElement> {
   const kinds: readonly ProjectileRuntime['kind'][] = [
     'spit',
     'fireball',
+    'fire_wave',
     'gear',
     'plasma',
     'dark_orb',
@@ -2173,6 +1159,12 @@ function bakeProjectiles(): Map<ProjectileRuntime['kind'], HTMLCanvasElement> {
       } else if (kind === 'fireball') {
         b.ellipseShaded(8, 8, 5.5, 5.5, hexToAbgr('#fff280'), hexToAbgr('#ff661a'), hexToAbgr('#b81414'), cWhite);
         b.px(3, 7 + f, hexToAbgr('#ffaa1d'));
+      } else if (kind === 'fire_wave') {
+        const sway = f === 0 ? 0 : 1;
+        b.tri(1, 14, 7 + sway, 2, 14, 14, hexToAbgr('#d91818'));
+        b.tri(3, 14, 8 + sway, 4, 13, 14, hexToAbgr('#ff7a14'));
+        b.tri(5, 14, 9 + sway, 7, 12, 14, hexToAbgr('#fff266'));
+        b.px(8 + sway, 6, cWhite);
       } else if (kind === 'gear') {
         b.ellipseShaded(8, 8, 5.5, 5.5, hexToAbgr('#dce6f2'), hexToAbgr('#8094b0'), hexToAbgr('#404d66'));
         b.rect(7, 1 + f, 2, 14 - f * 2, hexToAbgr('#dce6f2'));
@@ -2245,8 +1237,8 @@ interface EnemyVisualSpec {
 }
 
 const ENEMY_VISUALS: Readonly<Record<EnemyArchetypeId, EnemyVisualSpec>> = {
-  goomba: { style: 'blob', hi: '#e67855', mid: '#b84232', dark: '#6b1d24', acc: '#ffe6b8' },
-  air_goomba: { style: 'winged', hi: '#b882ff', mid: '#7842cc', dark: '#421c80', acc: '#fff5e6' },
+  goomba: { style: 'blob', hi: '#78ff66', mid: '#14a89c', dark: '#0c4f42', acc: '#ff7024' },
+  air_goomba: { style: 'winged', hi: '#82f7ff', mid: '#3885d4', dark: '#1a3673', acc: '#fff2b8' },
   spitter: { style: 'spitter', hi: '#a366ff', mid: '#6329b8', dark: '#36126b', acc: '#7aff38' },
   horned_beetle: { style: 'beetle', hi: '#7085d4', mid: '#3a4691', dark: '#1e2254', acc: '#ff4268' },
   guilhofly: { style: 'winged', hi: '#ff96c4', mid: '#cc3d82', dark: '#6b1447', acc: '#ffe866' },
@@ -2301,29 +1293,35 @@ function bakeEnemy(spec: EnemyVisualSpec): EnemySpriteSet {
     const bob = f === 1 ? -1 : 0;
 
     switch (spec.style) {
-      case 'blob':
-        b.ellipse(cx - 5 + f * 2, fh - 5, 3.5, 2.5, dark);
-        b.ellipse(cx + 5 - f * 2, fh - 5, 3.5, 2.5, dark);
-        b.ellipseShaded(cx, cy + bob, 10, 8.5, hi, mid, dark, cWhite);
-        b.rect(cx - 5, cy - 3 + bob, 3, 4, cWhite);
-        b.rect(cx + 2, cy - 3 + bob, 3, 4, cWhite);
-        b.rect(cx - 4, cy - 2 + bob, 2, 3, cOut);
-        b.rect(cx + 3, cy - 2 + bob, 2, 3, cOut);
-        b.line(cx - 5, cy - 4 + bob, cx - 1, cy - 2 + bob, cOut);
-        b.line(cx + 5, cy - 4 + bob, cx + 1, cy - 2 + bob, cOut);
-        b.px(cx - 2, cy + 4 + bob, acc);
-        b.px(cx + 2, cy + 4 + bob, acc);
+      case 'blob': {
+        b.ellipse(cx - 5 + f * 2, fh - 4, 3.5, 2.2, dark);
+        b.ellipse(cx + 5 - f * 2, fh - 4, 3.5, 2.2, dark);
+        b.ellipseShaded(cx, cy + bob, 11, 9, hi, mid, dark, cWhite);
+        b.ellipse(cx, cy - 5 + bob, 7.5, 3.5, dark);
+        b.line(cx - 6, cy - 7 + bob, cx + 6, cy - 7 + bob, hi);
+        b.ellipseShaded(cx - 3, cy + 2 + bob, 4, 4, cWhite, hi, mid);
+        b.rect(cx - 3, cy + 2 + bob, 2, 2, hexToAbgr('#a81058'));
+        b.px(cx - 4, cy + bob, cWhite);
+        b.tri(cx + 3, cy - 1 + bob, cx + 11, cy + 3 + bob, cx + 5, cy + 8 + bob, acc);
+        b.tri(cx + 4, cy + bob, cx + 9, cy + 2 + bob, cx + 5, cy + 4 + bob, cWhite);
         break;
+      }
 
       case 'winged': {
-        const wingY = f === 0 ? -5 : 2;
-        b.ellipse(cx - 10, cy - 2 + wingY, 5.5, 3.5, acc);
-        b.ellipse(cx + 10, cy - 2 + wingY, 5.5, 3.5, acc);
-        b.ellipseShaded(cx, cy + bob, 8.5, 7.5, hi, mid, dark, cWhite);
-        b.rect(cx - 4, cy - 2 + bob, 3, 3, cWhite);
-        b.rect(cx + 1, cy - 2 + bob, 3, 3, cWhite);
-        b.px(cx - 3, cy - 1 + bob, cOut);
-        b.px(cx + 2, cy - 1 + bob, cOut);
+        const flap = f === 0 ? -6 : 3;
+        b.tri(cx - 5, cy - 1, cx - 15, cy - 4 + flap, cx - 10, cy + 5 + (flap >> 1), acc);
+        b.tri(cx - 5, cy, cx - 13, cy - 2 + flap, cx - 7, cy + 4, cWhite);
+        b.tri(cx + 5, cy - 1, cx + 15, cy - 4 + flap, cx + 10, cy + 5 + (flap >> 1), acc);
+        b.tri(cx + 5, cy, cx + 13, cy - 2 + flap, cx + 7, cy + 4, cWhite);
+        b.tri(cx - 3, cy - 7 + bob, cx, cy - 12 + bob, cx + 3, cy - 7 + bob, acc);
+        b.ellipseShaded(cx, cy + 1 + bob, 8.5, 7.5, hi, mid, dark, cWhite);
+        b.ellipse(cx + 1, cy + 4 + bob, 5, 3, acc);
+        b.rect(cx - 4, cy - 2 + bob, 3, 4, cWhite);
+        b.rect(cx + 2, cy - 2 + bob, 3, 4, cWhite);
+        b.rect(cx - 3, cy - 1 + bob, 2, 3, cOut);
+        b.rect(cx + 3, cy - 1 + bob, 2, 3, cOut);
+        b.px(cx - 3, cy - 1 + bob, cWhite);
+        b.px(cx + 3, cy - 1 + bob, cWhite);
         break;
       }
 
@@ -2852,6 +1850,129 @@ function bakeBosses(): {
   };
 }
 
+function bakeFx(): Map<string, HTMLCanvasElement> {
+  const map = new Map<string, HTMLCanvasElement>();
+  const cOut = hexToAbgr(OUTLINE_DARK);
+  const cWhite = hexToAbgr(HIGHLIGHT_CREAM);
+
+  // 1. Stomp shockwave dust & impact ring (4 frames, 48x32)
+  {
+    const sheet = new PixelBuf(48 * 4, 32);
+    const b = new PixelBuf(48, 32);
+    const gold = hexToAbgr('#ffd84d');
+    const pink = hexToAbgr('#ff59b8');
+    const dust = hexToAbgr('#e6d9f2');
+    for (let f = 0; f < 4; f++) {
+      b.clear();
+      const spread = 8 + f * 5;
+      const h = Math.max(3, 12 - f * 2);
+      // Left & right bursting shockwave plumes
+      b.ellipseShaded(24 - spread, 25 - (h >> 1), 6 - f * 0.6, h * 0.5, cWhite, dust, pink);
+      b.ellipseShaded(24 + spread, 25 - (h >> 1), 6 - f * 0.6, h * 0.5, cWhite, dust, pink);
+      // Central kinetic impact arc
+      b.line(24 - spread, 27, 24 + spread, 27, f < 2 ? cWhite : gold);
+      b.line(24 - spread + 2, 26, 24 + spread - 2, 26, gold);
+      if (f < 2) {
+        b.tri(18, 25, 24, 10 + f * 4, 30, 25, gold);
+        b.tri(20, 25, 24, 14 + f * 4, 28, 25, cWhite);
+      }
+      b.outline(cOut);
+      sheet.blit(b, f * 48, 0);
+    }
+    map.set('stomp_ring', sheet.toCanvas());
+  }
+
+  // 2. Tongue / melee starburst impact spark (4 frames, 32x32)
+  {
+    const sheet = new PixelBuf(32 * 4, 32);
+    const b = new PixelBuf(32, 32);
+    const hi = hexToAbgr('#fff4a3');
+    const mid = hexToAbgr('#ff4d88');
+    for (let f = 0; f < 4; f++) {
+      b.clear();
+      const r = 6 + f * 3;
+      for (let a = 0; a < 8; a++) {
+        const th = (a / 8) * Math.PI * 2 + f * 0.25;
+        const x1 = 16 + Math.round(Math.cos(th) * r);
+        const y1 = 16 + Math.round(Math.sin(th) * r);
+        b.line(16, 16, x1, y1, a % 2 === 0 ? hi : mid);
+      }
+      if (f < 2) {
+        b.ellipse(16, 16, 5 - f, 5 - f, cWhite);
+      }
+      b.outline(cOut);
+      sheet.blit(b, f * 32, 0);
+    }
+    map.set('tongue_impact', sheet.toCanvas());
+  }
+
+  // 3. Fire blast ring (4 frames, 48x48)
+  {
+    const sheet = new PixelBuf(48 * 4, 48);
+    const b = new PixelBuf(48, 48);
+    const hot = hexToAbgr('#fff799');
+    const orange = hexToAbgr('#ff8a00');
+    const red = hexToAbgr('#d91818');
+    for (let f = 0; f < 4; f++) {
+      b.clear();
+      const r = 10 + f * 4;
+      b.ellipse(24, 24, r, r, red);
+      b.ellipse(24, 24, Math.max(2, r - 3), Math.max(2, r - 3), orange);
+      if (f < 2) {
+        b.ellipse(24, 24, Math.max(1, r - 6), Math.max(1, r - 6), hot);
+      } else {
+        b.ellipse(24, 24, Math.max(1, r - 6), Math.max(1, r - 6), 0);
+      }
+      b.outline(cOut);
+      sheet.blit(b, f * 48, 0);
+    }
+    map.set('fire_blast', sheet.toCanvas());
+  }
+
+  // 4. Volt arc crackle (4 frames, 48x32)
+  {
+    const sheet = new PixelBuf(48 * 4, 32);
+    const b = new PixelBuf(48, 32);
+    const cyan = hexToAbgr('#59f2ff');
+    const yel = hexToAbgr('#f2ff38');
+    for (let f = 0; f < 4; f++) {
+      b.clear();
+      let px = 4;
+      let py = 16;
+      for (let s = 1; s <= 5; s++) {
+        const nx = 4 + s * 8;
+        const ny = 16 + (((s + f) & 1) === 0 ? -7 : 7);
+        b.line(px, py, nx, ny, cyan);
+        b.line(px, py + 1, nx, ny + 1, yel);
+        px = nx;
+        py = ny;
+      }
+      b.outline(cOut);
+      sheet.blit(b, f * 48, 0);
+    }
+    map.set('volt_arc', sheet.toCanvas());
+  }
+
+  // 5. Shadow blink slash (4 frames, 48x32)
+  {
+    const sheet = new PixelBuf(48 * 4, 32);
+    const b = new PixelBuf(48, 32);
+    const mag = hexToAbgr('#ff006a');
+    const grn = hexToAbgr('#24ff78');
+    for (let f = 0; f < 4; f++) {
+      b.clear();
+      const ox = f * 3;
+      b.tri(4 + ox, 16, 40, 6 + f * 2, 44, 16, mag);
+      b.tri(8 + ox, 16, 38, 12 + f, 42, 16, grn);
+      b.outline(cOut);
+      sheet.blit(b, f * 48, 0);
+    }
+    map.set('shadow_slash', sheet.toCanvas());
+  }
+
+  return map;
+}
+
 // ============================================================================
 // ProceduralPixelAtlas Container
 // ============================================================================
@@ -2867,6 +1988,7 @@ export class ProceduralPixelAtlas {
   public readonly npcs = new Map<ShopId, HTMLCanvasElement>();
   public readonly collectibles = new Map<string, HTMLCanvasElement>();
   public readonly projectiles = new Map<ProjectileRuntime['kind'], HTMLCanvasElement>();
+  public readonly fx = new Map<string, HTMLCanvasElement>();
   public readonly enemies = new Map<EnemyArchetypeId, EnemySpriteSet>();
   public readonly bosses = new Map<BossId, BossSpriteSet>();
   public primalEyeIris: HTMLCanvasElement | null = null;
@@ -2886,21 +2008,21 @@ export class ProceduralPixelAtlas {
       this.heroSheets.set(form, bakeHeroForm(form));
     }
 
-    // 2. All 11 Biome 16-Mask Tilesets + Surface Deco + 3-Layer Parallax
-    for (let i = 0; i < BIOME_IDS.length; i++) {
-      const biome = BIOME_IDS[i]!;
-      const pal = BIOME_PALETTES[biome];
-      this.biomeTilesets.set(biome, bakeBiomeTileset(pal));
-      this.biomeDeco.set(biome, bakeBiomeDeco(pal));
-      this.biomeParallax.set(biome, bakeBiomeParallax(pal));
+    // 2. Delegate Biome Tilesets, Deco, Parallax, Special Tiles, Props & Hub NPCs to BiomeArtBaker
+    const worldArt = getBuiltInWorldArt();
+    if (worldArt) {
+      for (const [k, v] of worldArt.biomeTilesets) this.biomeTilesets.set(k, v);
+      for (const [k, v] of worldArt.biomeDeco) this.biomeDeco.set(k, v);
+      for (const [k, v] of worldArt.biomeParallax) this.biomeParallax.set(k, v);
+      for (const [k, v] of worldArt.specialTiles) this.specialTiles.set(k, v);
+      for (const [k, v] of worldArt.props) this.props.set(k, v);
+      for (const [k, v] of worldArt.npcs) this.npcs.set(k, v);
     }
 
-    // 3. Special tiles, props, NPCs, collectibles, projectiles
-    for (const [k, v] of bakeSpecialTiles()) this.specialTiles.set(k, v);
-    for (const [k, v] of bakeProps()) this.props.set(k, v);
-    for (const [k, v] of bakeHubNpcs()) this.npcs.set(k, v);
+    // 3. Collectibles, projectiles, FX
     for (const [k, v] of bakeCollectibles()) this.collectibles.set(k, v);
     for (const [k, v] of bakeProjectiles()) this.projectiles.set(k, v);
+    for (const [k, v] of bakeFx()) this.fx.set(k, v);
 
     // 4. All 34 Enemy Archetypes
     const enemyIds = Object.keys(ENEMY_VISUALS) as EnemyArchetypeId[];

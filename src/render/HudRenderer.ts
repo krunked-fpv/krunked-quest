@@ -1,6 +1,7 @@
 /**
  * Krunked Quest — Crisp Pixel-Art HUD & Animated Title Screen Backdrop Renderer
- * Drawn natively at 576x324 using pre-baked bitmap PixelFont & pixel sprites.
+ * Drawn natively at 576x324 using pre-baked bitmap PixelFont, extracted origin HUD sprites
+ * (when Custom Pack is active), and upgraded Built-In pixel sprites.
  * Zero blurry canvas fonts, zero per-frame allocations!
  */
 
@@ -12,6 +13,7 @@ import {
   VIEWPORT_W,
   type BossRuntime,
   type DeviceGlyphMap,
+  type IAssetPackManager,
   type IWorldCatalog,
   type ScreenMode,
   type SimState,
@@ -30,6 +32,11 @@ import {
   HeroStdFrame,
   type ProceduralPixelAtlas,
 } from '../assets/ProceduralPixelAtlas.js';
+import {
+  isDrawable,
+  resolveCustomFrame,
+  type SpriteSliceOut,
+} from './EntityRenderer.js';
 import type { PixelFont } from './PixelFont.js';
 
 // Precomputed 32-segment radial combo wheel coordinates (zero per-frame trig!)
@@ -42,11 +49,36 @@ for (let i = 0; i < COMBO_SEGS; i++) {
   COMBO_SIN[i] = Math.sin(ang);
 }
 
+// Pre-allocated constant clip & layer lookup lists (ZERO per-frame allocations!)
+const TITLE_PARALLAX_KEYS: readonly string[] = ['bg/TDM_far', 'bg/TDM_mid', 'bg/TDM_near'];
+const TITLE_PARALLAX_SPEEDS: readonly number[] = [10, 20, 34];
+const TITLE_HERO_JUMP_CLIPS: readonly string[] = ['jump', 'run', 'idle'];
+const TITLE_HERO_RUN_CLIPS: readonly string[] = ['run', 'idle'];
+const HUD_COMBO_FRAME: readonly string[] = ['part_0', 'frame', 'idle'];
+const HUD_COMBO_DARK: readonly string[] = ['part_1', 'dark'];
+const HUD_COMBO_RAINBOW: readonly string[] = ['part_3', 'rainbow'];
+const HUD_COMBO_RED: readonly string[] = ['part_3', 'red'];
+
+function wrapOffset(val: number, period: number): number {
+  const m = val % period;
+  return m < 0 ? m + period : m;
+}
+
 export class HudRenderer {
   private bossTrailRatio = 1;
   private roomToastTimer = 0;
   private roomToastText = '';
   private roomToastBiome = '';
+  private readonly slice: SpriteSliceOut = {
+    sx: 0,
+    sy: 0,
+    sw: 32,
+    sh: 32,
+    pivotX: 0.5,
+    pivotY: 1.0,
+    hasManifestRect: false,
+    matchedClip: false,
+  };
 
   public triggerRoomToast(roomName: string, biomeLabel: string): void {
     this.roomToastText = roomName.toUpperCase();
@@ -70,40 +102,91 @@ export class HudRenderer {
     }
   }
 
-  /** Animated 16-bit neo-retro Title Screen pixel-art backdrop at 576x324. */
+  /** Animated 16-bit neo-retro Title Screen pixel-art backdrop at 576x324 (Custom Pack + Built-In). */
   public renderTitleBackdrop(
     ctx: CanvasRenderingContext2D,
     atlas: ProceduralPixelAtlas,
     timeSec: number,
+    customPack: IAssetPackManager | null = null,
+    skipParallax = false,
   ): void {
-    const pSet = atlas.biomeParallax.get('TDM');
-    if (pSet) {
-      ctx.drawImage(pSet.sky, 0, 0);
+    // 1. Parallax Sky Backdrop (when not already drawn by TileRenderer.renderParallax)
+    if (!skipParallax) {
+      const customBg = customPack ? (customPack.getSprite('bg/TDM') ?? customPack.getSprite('bg/OPOUSO')) : null;
+      if (isDrawable(customBg)) {
+        const bw =
+          typeof HTMLImageElement !== 'undefined' && customBg instanceof HTMLImageElement
+            ? customBg.naturalWidth || customBg.width
+            : customBg.width;
+        const bh =
+          typeof HTMLImageElement !== 'undefined' && customBg instanceof HTMLImageElement
+            ? customBg.naturalHeight || customBg.height
+            : customBg.height;
+        const drawH = VIEWPORT_H;
+        const drawW = Math.max(VIEWPORT_W, Math.round((bw / Math.max(1, bh)) * drawH));
+        const scrollOff = Math.round(wrapOffset(timeSec * 14, drawW));
+        for (let x = -scrollOff; x < VIEWPORT_W; x += drawW) {
+          ctx.drawImage(customBg, 0, 0, bw, bh, x, 0, drawW, drawH);
+        }
 
-      const farW = pSet.far.width;
-      const farOff = Math.round((timeSec * 8) % farW);
-      for (let x = -farOff; x < VIEWPORT_W; x += farW) {
-        ctx.drawImage(pSet.far, x, 118);
-      }
+        // Optional extracted far/mid/near parallax layers if present
+        for (let li = 0; li < TITLE_PARALLAX_KEYS.length; li++) {
+          const lImg = customPack ? customPack.getSprite(TITLE_PARALLAX_KEYS[li]!) : null;
+          if (!isDrawable(lImg)) continue;
+          const lw =
+            typeof HTMLImageElement !== 'undefined' && lImg instanceof HTMLImageElement
+              ? lImg.naturalWidth || lImg.width
+              : lImg.width;
+          const lh =
+            typeof HTMLImageElement !== 'undefined' && lImg instanceof HTMLImageElement
+              ? lImg.naturalHeight || lImg.height
+              : lImg.height;
+          const dH = Math.min(VIEWPORT_H, lh);
+          const dW = Math.max(128, Math.round((lw / Math.max(1, lh)) * dH));
+          const off = Math.round(wrapOffset(timeSec * TITLE_PARALLAX_SPEEDS[li]!, dW));
+          const dy = VIEWPORT_H - dH;
+          for (let x = -off; x < VIEWPORT_W; x += dW) {
+            ctx.drawImage(lImg, 0, 0, lw, lh, x, dy, dW, dH);
+          }
+        }
+      } else {
+        const pSet = atlas.biomeParallax.get('TDM');
+        if (pSet) {
+          ctx.drawImage(pSet.sky, 0, 0);
 
-      const midW = pSet.mid.width;
-      const midOff = Math.round((timeSec * 18) % midW);
-      for (let x = -midOff; x < VIEWPORT_W; x += midW) {
-        ctx.drawImage(pSet.mid, x, 142);
-      }
+          const farW = pSet.far.width;
+          const farOff = Math.round((timeSec * 8) % farW);
+          for (let x = -farOff; x < VIEWPORT_W; x += farW) {
+            ctx.drawImage(pSet.far, x, 118);
+          }
 
-      const nearW = pSet.near.width;
-      const nearOff = Math.round((timeSec * 32) % nearW);
-      for (let x = -nearOff; x < VIEWPORT_W; x += nearW) {
-        ctx.drawImage(pSet.near, x, 188);
+          const midW = pSet.mid.width;
+          const midOff = Math.round((timeSec * 18) % midW);
+          for (let x = -midOff; x < VIEWPORT_W; x += midW) {
+            ctx.drawImage(pSet.mid, x, 142);
+          }
+
+          const nearW = pSet.near.width;
+          const nearOff = Math.round((timeSec * 32) % nearW);
+          for (let x = -nearOff; x < VIEWPORT_W; x += nearW) {
+            ctx.drawImage(pSet.near, x, 188);
+          }
+        } else {
+          ctx.fillStyle = '#1b57cc';
+          ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
+        }
       }
-    } else {
-      ctx.fillStyle = '#1b57cc';
-      ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
     }
 
-    // Scenic lush pixel grassy ridge along bottom of title screen
-    const tdmTiles = atlas.biomeTilesets.get('TDM');
+    // 2. Scenic lush pixel grassy ridge along bottom of title screen
+    //    Use custom TDM tileset when normalized 16-mask strip (`tileLayout.format === 'strip16'` or 512x64/512x32)
+    const rawCustomTiles = customPack ? customPack.getBiomeTileset('TDM') : null;
+    const tilesEntry = customPack ? customPack.getEntry('tiles/TDM') : null;
+    const customTilesValid =
+      isDrawable(rawCustomTiles) &&
+      (tilesEntry?.tileLayout?.format === 'strip16' ||
+        (rawCustomTiles.width >= 512 && rawCustomTiles.height <= 128));
+    const tdmTiles = customTilesValid ? rawCustomTiles : atlas.biomeTilesets.get('TDM');
     const tdmDeco = atlas.biomeDeco.get('TDM');
     const scrollGround = Math.round((timeSec * 44) % 32);
     if (tdmTiles) {
@@ -114,54 +197,142 @@ export class HudRenderer {
         ctx.drawImage(tdmTiles, 15 * 32, 0, 32, 32, x, VIEWPORT_H - 4, 32, 32);
       }
     }
-    if (tdmDeco) {
+    if (tdmDeco && !customTilesValid) {
       for (let i = 0; i < 12; i++) {
-        const dx = (i * 56 - scrollGround + VIEWPORT_W + 64) % (VIEWPORT_W + 64) - 32;
+        const dx = ((i * 56 - scrollGround + VIEWPORT_W + 64) % (VIEWPORT_W + 64)) - 32;
         ctx.drawImage(tdmDeco, (i & 7) * 16, 0, 16, 16, dx, VIEWPORT_H - 51, 16, 16);
       }
     }
 
-    // Floating sparkling crystals & coins drifting across foreground
+    // 3. Floating sparkling crystals & coins drifting across foreground
+    const customCrystal = customPack ? customPack.getSprite('ui/crystal') : null;
+    const customCoin = customPack ? customPack.getSprite('ui/coin') : null;
     const crystalSpr = atlas.collectibles.get('crystal');
     const coinSpr = atlas.collectibles.get('coin');
     const f4 = ((timeSec * 8) | 0) & 3;
-    if (crystalSpr && coinSpr) {
-      for (let i = 0; i < 5; i++) {
-        const cx = Math.round(((560 - timeSec * 28 + i * 124) % (VIEWPORT_W + 60) + VIEWPORT_W + 60) % (VIEWPORT_W + 60) - 30);
-        const cy = 246 + Math.round(Math.sin(timeSec * 3 + i * 1.4) * 12);
-        if (i % 2 === 0) {
+    for (let i = 0; i < 5; i++) {
+      const cx = Math.round(
+        (((560 - timeSec * 28 + i * 124) % (VIEWPORT_W + 60)) + VIEWPORT_W + 60) % (VIEWPORT_W + 60) - 30,
+      );
+      const cy = 246 + Math.round(Math.sin(timeSec * 3 + i * 1.4) * 12);
+      if (i % 2 === 0) {
+        if (isDrawable(customCrystal)) {
+          resolveCustomFrame(customPack, 'ui/crystal', customCrystal, timeSec, 8, true, this.slice);
+          ctx.drawImage(
+            customCrystal,
+            this.slice.sx,
+            this.slice.sy,
+            this.slice.sw,
+            this.slice.sh,
+            cx,
+            cy,
+            16,
+            16,
+          );
+        } else if (crystalSpr) {
           ctx.drawImage(crystalSpr, f4 * 16, 0, 16, 20, cx, cy, 16, 20);
-        } else {
+        }
+      } else {
+        if (isDrawable(customCoin)) {
+          resolveCustomFrame(customPack, 'ui/coin', customCoin, timeSec, 8, true, this.slice);
+          ctx.drawImage(
+            customCoin,
+            this.slice.sx,
+            this.slice.sy,
+            this.slice.sw,
+            this.slice.sh,
+            cx,
+            cy,
+            20,
+            20,
+          );
+        } else if (coinSpr) {
           ctx.drawImage(coinSpr, f4 * 20, 0, 20, 20, cx, cy, 20, 20);
         }
       }
     }
 
-    // Heroic Krunk sprinting joyfully across the lower-left ridge cycling forms subtly!
+    // 4. Heroic Krunk sprinting joyfully across the lower-left ridge cycling forms!
     const formIdx = ((timeSec * 0.25) | 0) % HERO_FORMS.length;
     const activeForm = HERO_FORMS[formIdx]!;
-    const heroSet = atlas.heroSheets.get(activeForm);
-    if (heroSet) {
-      const runFrame = HeroStdFrame.Run0 + (((timeSec * 10) | 0) & 3);
-      const jumpArc = Math.max(0, Math.sin(timeSec * 2.4)) > 0.82 ? Math.round(Math.sin((timeSec * 2.4 - 0.96) * 8) * 16) : 0;
-      const hx = 92;
-      const hy = VIEWPORT_H - 36 - Math.max(0, jumpArc);
-      ctx.fillStyle = 'rgba(24, 11, 32, 0.4)';
-      ctx.fillRect(hx - 10, VIEWPORT_H - 37, 20, 3);
-      ctx.drawImage(
-        heroSet.standard,
-        (jumpArc > 2 ? HeroStdFrame.Jump : runFrame) * HERO_STD_FRAME_W,
-        0,
-        HERO_STD_FRAME_W,
-        HERO_STD_FRAME_H,
-        hx - (HERO_STD_FRAME_W >> 1),
-        hy - HERO_STD_FRAME_H + 3,
-        HERO_STD_FRAME_W,
-        HERO_STD_FRAME_H,
+    const jumpArc =
+      Math.max(0, Math.sin(timeSec * 2.4)) > 0.82
+        ? Math.round(Math.sin((timeSec * 2.4 - 0.96) * 8) * 16)
+        : 0;
+    const hx = 86;
+    const hy = VIEWPORT_H - 36 - Math.max(0, jumpArc);
+    ctx.fillStyle = 'rgba(24, 11, 32, 0.4)';
+    ctx.fillRect(hx - 10, VIEWPORT_H - 37, 20, 3);
+
+    const customHeroSheet = customPack ? customPack.getHeroSheet(activeForm) : null;
+    if (isDrawable(customHeroSheet)) {
+      const heroKey = `hero/${activeForm}`;
+      const gridCols = activeForm === 'krunk_electric' || activeForm === 'krunk_shadow' ? 5 : 10;
+      const gridRows = activeForm === 'krunk_electric' || activeForm === 'krunk_shadow' ? 2 : 1;
+      resolveCustomFrame(
+        customPack,
+        heroKey,
+        customHeroSheet,
+        timeSec,
+        12,
+        true,
+        this.slice,
+        jumpArc > 2 ? TITLE_HERO_JUMP_CLIPS : TITLE_HERO_RUN_CLIPS,
+        gridCols,
+        gridRows,
       );
+      const dw = this.slice.sw;
+      const dh = this.slice.sh;
+      ctx.drawImage(
+        customHeroSheet,
+        this.slice.sx,
+        this.slice.sy,
+        this.slice.sw,
+        this.slice.sh,
+        hx - Math.round(dw * this.slice.pivotX),
+        hy - Math.round(dh * this.slice.pivotY),
+        dw,
+        dh,
+      );
+    } else {
+      const heroSet = atlas.heroSheets.get(activeForm);
+      if (heroSet) {
+        const runFrame = HeroStdFrame.Run0 + (((timeSec * 10) | 0) & 3);
+        ctx.drawImage(
+          heroSet.standard,
+          (jumpArc > 2 ? HeroStdFrame.Jump : runFrame) * HERO_STD_FRAME_W,
+          0,
+          HERO_STD_FRAME_W,
+          HERO_STD_FRAME_H,
+          hx - (HERO_STD_FRAME_W >> 1),
+          hy - HERO_STD_FRAME_H + 3,
+          HERO_STD_FRAME_W,
+          HERO_STD_FRAME_H,
+        );
+      }
     }
 
-    // Subtle dark atmospheric vignette strip across top/center so HTML title logo pops
+    // 5. Crisp origin Title Logo emblem showcased in upper-left scenic margin when Custom Pack is active
+    const customLogo = customPack ? customPack.getSprite('ui/title_logo') : null;
+    if (isDrawable(customLogo)) {
+      const lw =
+        typeof HTMLImageElement !== 'undefined' && customLogo instanceof HTMLImageElement
+          ? customLogo.naturalWidth || customLogo.width
+          : customLogo.width;
+      const lh =
+        typeof HTMLImageElement !== 'undefined' && customLogo instanceof HTMLImageElement
+          ? customLogo.naturalHeight || customLogo.height
+          : customLogo.height;
+      const maxW = 136;
+      const maxH = 84;
+      const s = Math.min(maxW / Math.max(1, lw), maxH / Math.max(1, lh));
+      const dw = Math.max(32, Math.round(lw * s));
+      const dh = Math.max(24, Math.round(lh * s));
+      const bob = Math.round(Math.sin(timeSec * 2.4) * 2);
+      ctx.drawImage(customLogo, 0, 0, lw, lh, 14, 18 + bob, dw, dh);
+    }
+
+    // Subtle dark atmospheric vignette strip across top/center so HTML title panel pops
     ctx.fillStyle = 'rgba(13, 8, 22, 0.22)';
     ctx.fillRect(0, 0, VIEWPORT_W, 196);
   }
@@ -175,18 +346,19 @@ export class HudRenderer {
     glyphs: DeviceGlyphMap,
     screenMode: ScreenMode,
     timeSec: number,
+    customPack: IAssetPackManager | null = null,
   ): void {
     if (screenMode === 'title') return;
 
-    this.renderTopLeftCluster(ctx, state, atlas, font, glyphs, timeSec);
-    this.renderTopRightCluster(ctx, state, catalog, atlas, font, timeSec);
+    this.renderTopLeftCluster(ctx, state, atlas, font, glyphs, timeSec, customPack);
+    this.renderTopRightCluster(ctx, state, catalog, atlas, font, timeSec, customPack);
 
     if (state.boss && !state.boss.defeated) {
       this.renderBossBar(ctx, state.boss, catalog, font, timeSec);
     }
 
     if (state.combo.bannerTimer > 0) {
-      this.renderComboBanner(ctx, state.combo.bannerText || 'KRUNKED COMBO!', font, timeSec);
+      this.renderComboBanner(ctx, state.combo.bannerText || 'KRUNKED COMBO!', font, timeSec, customPack);
     }
 
     if (
@@ -210,6 +382,7 @@ export class HudRenderer {
     font: PixelFont,
     glyphs: DeviceGlyphMap,
     timeSec: number,
+    customPack: IAssetPackManager | null,
   ): void {
     // 1. Glowing Radial Combo Wheel at (22, 22)
     const cx = 22;
@@ -221,7 +394,7 @@ export class HudRenderer {
     const activeSegs = Math.round(ratio * COMBO_SEGS);
     const pulse = (((timeSec * 10) | 0) & 1) === 0;
 
-    // Dark plum backing disk + gold outer bezel
+    // Dark plum backing disk + outer bezel for radial combo wheel
     ctx.fillStyle = OUTLINE_DARK;
     ctx.fillRect(cx - 14, cy - 13, 29, 27);
     ctx.fillRect(cx - 13, cy - 14, 27, 29);
@@ -255,7 +428,7 @@ export class HudRenderer {
       ctx.fillRect(px - 1, py - 1, 3, 3);
     }
 
-    // Center combo count or tiny heart-heal indicator
+    // Center combo count
     if (state.combo.count > 0) {
       font.draw(
         ctx,
@@ -271,44 +444,113 @@ export class HudRenderer {
       font.draw(ctx, '0', cx + 1, cy - 3, 'dim', 1, 'center', true);
     }
 
-    // 2. Heart Orbs (+ RockShield / MagicShield badges)
+    // 2. Heart Orbs (+ RockShield / MagicShield icons using `ui/heart` frame 1 ruby heart & `ui/shield_icon`!)
+    const customHeart = customPack ? customPack.getSprite('ui/heart') : null;
+    const customHeartEmpty = customPack ? customPack.getSprite('ui/heart_empty') : null;
+    const hasCustomHeart = isDrawable(customHeart);
+    if (hasCustomHeart) {
+      // Frame 0 of `ui/heart` is Krunk's face icon; frame 1 (`32x32`) is the front-facing glossy ruby heart!
+      const heartEntry = customPack ? customPack.getEntry('ui/heart') : null;
+      const heartFrameIdx = heartEntry && heartEntry.frames && heartEntry.frames.length > 1 ? 1 : 0;
+      resolveCustomFrame(customPack, 'ui/heart', customHeart, 0, 1, false, this.slice, undefined, 0, 0, heartFrameIdx);
+    }
+    const hsx = this.slice.sx;
+    const hsy = this.slice.sy;
+    const hsw = this.slice.sw;
+    const hsh = this.slice.sh;
+
     const heartFull = atlas.collectibles.get('heart_full');
     const heartEmpty = atlas.collectibles.get('heart_empty');
     const maxHp = Math.max(1, Math.min(10, state.hero.maxHp));
     const lowHpPulse = state.hero.hp === 1 && (((timeSec * 8) | 0) & 1) === 1 ? -1 : 0;
     let hx = 40;
-    const hy = 8;
+    const hy = 6;
 
     for (let i = 0; i < maxHp; i++) {
       const filled = i < state.hero.hp;
-      const spr = filled ? heartFull : heartEmpty;
-      if (spr) {
-        ctx.drawImage(spr, hx, hy + (filled && i === 0 ? lowHpPulse : 0));
+      const oy = filled && i === 0 ? lowHpPulse : 0;
+      if (filled && hasCustomHeart) {
+        ctx.drawImage(customHeart, hsx, hsy, hsw, hsh, hx - 1, hy - 1 + oy, 16, 16);
+      } else if (!filled && isDrawable(customHeartEmpty)) {
+        resolveCustomFrame(customPack, 'ui/heart_empty', customHeartEmpty, timeSec, 4, true, this.slice);
+        ctx.drawImage(
+          customHeartEmpty,
+          this.slice.sx,
+          this.slice.sy,
+          this.slice.sw,
+          this.slice.sh,
+          hx - 1,
+          hy - 1,
+          16,
+          16,
+        );
+      } else {
+        const spr = filled ? heartFull : heartEmpty;
+        if (spr) {
+          ctx.drawImage(spr, hx, hy + 1 + oy);
+        }
       }
-      hx += 15;
+      hx += 16;
     }
+
+    // Shield icons (`ui/shield_icon`: frame 0 / clip 'rock' = RockShield, frame 1 / clip 'magic' = MagicShield)
+    const customShieldSheet = customPack ? customPack.getSprite('ui/shield_icon') : null;
+    const hasShieldSheet = isDrawable(customShieldSheet);
 
     if (state.hero.rockShieldActive) {
-      const rs = atlas.collectibles.get('rock_shield');
-      if (rs) {
-        ctx.drawImage(rs, hx + 1, hy);
-        hx += 15;
-      }
-    }
-    if (state.hero.magicShieldTimer > 0) {
-      const ms = atlas.collectibles.get('magic_shield');
-      if (ms) {
-        ctx.drawImage(ms, hx + 1, hy);
+      if (hasShieldSheet) {
+        resolveCustomFrame(customPack, 'ui/shield_icon', customShieldSheet, 0, 1, false, this.slice, 'rock', 2, 1, 0);
+        ctx.drawImage(
+          customShieldSheet,
+          this.slice.sx,
+          this.slice.sy,
+          this.slice.sw,
+          this.slice.sh,
+          hx,
+          hy + 1,
+          17,
+          13,
+        );
+        hx += 18;
+      } else {
+        const rs = atlas.collectibles.get('rock_shield');
+        if (rs) {
+          ctx.drawImage(rs, hx, hy + 1);
+          hx += 16;
+        }
       }
     }
 
-    // 3. Active Form Badge below hearts
+    if (state.hero.magicShieldTimer > 0) {
+      if (hasShieldSheet) {
+        resolveCustomFrame(customPack, 'ui/shield_icon', customShieldSheet, 0, 1, false, this.slice, 'magic', 2, 1, 1);
+        ctx.drawImage(
+          customShieldSheet,
+          this.slice.sx,
+          this.slice.sy,
+          this.slice.sw,
+          this.slice.sh,
+          hx,
+          hy + 1,
+          17,
+          13,
+        );
+      } else {
+        const ms = atlas.collectibles.get('magic_shield');
+        if (ms) {
+          ctx.drawImage(ms, hx, hy + 1);
+        }
+      }
+    }
+
+    // 3. Active Form Badge below hearts (uses `ui/form_icons` 6-frame 32x32 sheet rendered at crisp 16x16!)
     const form = state.hero.form;
+    const formIdx = Math.max(0, HERO_FORMS.indexOf(form));
     const pal = HERO_FORM_PALETTES[form];
     const badgeX = 40;
-    const badgeY = 25;
-    const badgeW = 54;
-    const badgeH = 14;
+    const badgeY = 24;
+    const badgeW = 60;
+    const badgeH = 18;
     ctx.fillStyle = OUTLINE_DARK;
     ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
     ctx.fillStyle = pal[2];
@@ -316,14 +558,99 @@ export class HudRenderer {
     ctx.fillStyle = pal[0];
     ctx.fillRect(badgeX + 1, badgeY + 1, badgeW - 2, 2);
 
-    const icon = atlas.collectibles.get(`form_icon_${form}`);
-    if (icon) {
-      ctx.drawImage(icon, badgeX + 2, badgeY + 1);
+    const customFormIcons = customPack ? customPack.getSprite('ui/form_icons') : null;
+    if (isDrawable(customFormIcons)) {
+      resolveCustomFrame(
+        customPack,
+        'ui/form_icons',
+        customFormIcons,
+        0,
+        1,
+        false,
+        this.slice,
+        undefined,
+        HERO_FORMS.length,
+        1,
+        formIdx,
+      );
+      ctx.drawImage(
+        customFormIcons,
+        this.slice.sx,
+        this.slice.sy,
+        this.slice.sw,
+        this.slice.sh,
+        badgeX + 2,
+        badgeY + 1,
+        16,
+        16,
+      );
+    } else {
+      const icon = atlas.collectibles.get(`form_icon_${form}`);
+      if (icon) {
+        ctx.drawImage(icon, badgeX + 3, badgeY + 3);
+      }
     }
-    font.draw(ctx, HERO_FORM_LABELS[form], badgeX + 16, badgeY + 4, 'white', 1, 'left', true);
+    font.draw(ctx, HERO_FORM_LABELS[form], badgeX + 20, badgeY + 6, 'white', 1, 'left', true);
 
     if (state.progress.unlockedForms.length > 1) {
-      font.draw(ctx, glyphs.form, badgeX + badgeW + 4, badgeY + 4, 'dim', 1, 'left', true);
+      font.draw(ctx, glyphs.form, badgeX + badgeW + 4, badgeY + 6, 'dim', 1, 'left', true);
+    }
+
+    // 4. Extracted origin `ui/combo_bar` gauge strip below form badge when combo is active!
+    //    (part_1 = dark purple backing, part_3 = rainbow fill, part_0 = magenta/white outer frame with heart!)
+    if (state.combo.count > 0 && customPack) {
+      const comboBar = customPack.getSprite('ui/combo_bar');
+      if (isDrawable(comboBar)) {
+        const barX = 40;
+        const barY = 44;
+        const barW = 106;
+        const barH = 13;
+        const fillW = 102;
+        const fillH = 10;
+        resolveCustomFrame(customPack, 'ui/combo_bar', comboBar, 0, 1, false, this.slice, HUD_COMBO_DARK);
+        if (this.slice.matchedClip) {
+          ctx.drawImage(
+            comboBar,
+            this.slice.sx,
+            this.slice.sy,
+            this.slice.sw,
+            this.slice.sh,
+            barX + 2,
+            barY + 2,
+            fillW,
+            fillH,
+          );
+        }
+        const fillClip = ratio >= 0.7 ? HUD_COMBO_RAINBOW : HUD_COMBO_RED;
+        resolveCustomFrame(customPack, 'ui/combo_bar', comboBar, timeSec, 12, true, this.slice, fillClip);
+        if (this.slice.matchedClip && ratio > 0.01) {
+          const fw = Math.max(1, Math.round(this.slice.sw * ratio));
+          const dw = Math.max(1, Math.round(fillW * ratio));
+          ctx.drawImage(comboBar, this.slice.sx, this.slice.sy, fw, this.slice.sh, barX + 2, barY + 2, dw, fillH);
+        }
+        resolveCustomFrame(customPack, 'ui/combo_bar', comboBar, 0, 1, false, this.slice, HUD_COMBO_FRAME);
+        if (this.slice.matchedClip) {
+          ctx.drawImage(comboBar, this.slice.sx, this.slice.sy, this.slice.sw, this.slice.sh, barX, barY, barW, barH);
+        }
+        // When near auto-heal threshold, pulse the origin heal-heart animation (`ui/combo_wheel`) at the heart socket!
+        if (ratio >= COMBO_RULES.HEAL_THRESHOLD) {
+          const healHeart = customPack.getSprite('ui/combo_wheel');
+          if (isDrawable(healHeart)) {
+            resolveCustomFrame(customPack, 'ui/combo_wheel', healHeart, timeSec, 12, true, this.slice);
+            ctx.drawImage(
+              healHeart,
+              this.slice.sx,
+              this.slice.sy,
+              this.slice.sw,
+              this.slice.sh,
+              barX + barW - 22,
+              barY - 6,
+              32,
+              24,
+            );
+          }
+        }
+      }
     }
   }
 
@@ -334,6 +661,7 @@ export class HudRenderer {
     atlas: ProceduralPixelAtlas,
     font: PixelFont,
     timeSec: number,
+    customPack: IAssetPackManager | null,
   ): void {
     // 1. Compact Pixel Minimap Grid at far top-right
     const mapW = 56;
@@ -389,8 +717,10 @@ export class HudRenderer {
       ctx.fillRect(cellX, cellY, 5, 4);
     }
 
-    // 2. Crystal & Coin counters just left of minimap
+    // 2. Crystal & Coin counters just left of minimap (using origin ui/crystal & ui/coin!)
     const counterRightX = mapX - 8;
+    const customCrystal = customPack ? customPack.getSprite('ui/crystal') : null;
+    const customCoin = customPack ? customPack.getSprite('ui/coin') : null;
     const crystalSpr = atlas.collectibles.get('crystal');
     const coinSpr = atlas.collectibles.get('coin');
     const f4 = ((timeSec * 6) | 0) & 3;
@@ -398,16 +728,42 @@ export class HudRenderer {
     // Crystals row
     const crystalStr = `${state.progress.crystals}`;
     font.draw(ctx, crystalStr, counterRightX, 9, 'cyan', 1, 'right', true);
-    if (crystalSpr) {
-      const cw = font.measure(crystalStr, 1);
+    const cw = font.measure(crystalStr, 1);
+    if (isDrawable(customCrystal)) {
+      resolveCustomFrame(customPack, 'ui/crystal', customCrystal, timeSec, 8, true, this.slice);
+      ctx.drawImage(
+        customCrystal,
+        this.slice.sx,
+        this.slice.sy,
+        this.slice.sw,
+        this.slice.sh,
+        counterRightX - cw - 15,
+        5,
+        13,
+        13,
+      );
+    } else if (crystalSpr) {
       ctx.drawImage(crystalSpr, f4 * 16, 0, 16, 20, counterRightX - cw - 15, 4, 12, 15);
     }
 
     // Coins row
     const coinStr = `${state.progress.collectedCoinIds.length}/${catalog.totalCoins}`;
     font.draw(ctx, coinStr, counterRightX, 23, 'gold', 1, 'right', true);
-    if (coinSpr) {
-      const tw = font.measure(coinStr, 1);
+    const tw = font.measure(coinStr, 1);
+    if (isDrawable(customCoin)) {
+      resolveCustomFrame(customPack, 'ui/coin', customCoin, timeSec, 8, true, this.slice);
+      ctx.drawImage(
+        customCoin,
+        this.slice.sx,
+        this.slice.sy,
+        this.slice.sw,
+        this.slice.sh,
+        counterRightX - tw - 16,
+        19,
+        13,
+        13,
+      );
+    } else if (coinSpr) {
       ctx.drawImage(coinSpr, f4 * 20, 0, 20, 20, counterRightX - tw - 16, 19, 13, 13);
     }
 
@@ -449,10 +805,8 @@ export class HudRenderer {
     const bx = Math.round((VIEWPORT_W - barW) * 0.5);
     const by = VIEWPORT_H - 22;
 
-    // Boss Name & Phase diamonds above bar
     font.draw(ctx, title, VIEWPORT_W * 0.5, by - 11, 'cream', 1, 'center', true);
 
-    // Ornate dark-plum + gold pixel frame
     ctx.fillStyle = OUTLINE_DARK;
     ctx.fillRect(bx - 3, by - 3, barW + 6, barH + 6);
     ctx.fillStyle = UI_COLORS.frameGold;
@@ -460,14 +814,12 @@ export class HudRenderer {
     ctx.fillStyle = UI_COLORS.panelBg;
     ctx.fillRect(bx, by, barW, barH);
 
-    // White damage drain trail
     const trailW = Math.round(Math.max(0, Math.min(1, this.bossTrailRatio)) * barW);
     if (trailW > 0) {
       ctx.fillStyle = UI_COLORS.bossHpTrail;
       ctx.fillRect(bx, by, trailW, barH);
     }
 
-    // Active crimson-to-gold health fill
     const hpRatio = boss.maxHp > 0 ? Math.max(0, Math.min(1, boss.hp / boss.maxHp)) : 0;
     const fillW = Math.round(hpRatio * barW);
     if (fillW > 0) {
@@ -480,13 +832,11 @@ export class HudRenderer {
       ctx.fillRect(bx, by + 1, fillW, 2);
     }
 
-    // Subtle 5-segment tick notches
     ctx.fillStyle = OUTLINE_DARK;
     for (let s = 1; s < 5; s++) {
       ctx.fillRect(bx + Math.round((barW * s) / 5), by, 1, barH);
     }
 
-    // Phase diamond pips on left & right ends
     for (let p = 0; p < 3; p++) {
       const active = p < boss.phase;
       const px = bx + barW + 8 + p * 7;
@@ -503,9 +853,35 @@ export class HudRenderer {
     text: string,
     font: PixelFont,
     timeSec: number,
+    customPack: IAssetPackManager | null,
   ): void {
     const pulse = (((timeSec * 12) | 0) & 1) === 0;
-    const bannerY = 58 + Math.round(Math.sin(timeSec * 14) * 2);
+    const bannerY = 54 + Math.round(Math.sin(timeSec * 14) * 2);
+
+    // If Custom Pack has a wide combo celebration graphic (`ui/combo_badge`), draw it cleanly!
+    const customBanner = customPack ? customPack.getSprite('ui/combo_badge') : null;
+    if (isDrawable(customBanner)) {
+      resolveCustomFrame(customPack, 'ui/combo_badge', customBanner, timeSec, 8, true, this.slice);
+      const bw = this.slice.sw;
+      const bh = this.slice.sh;
+      if (bw / Math.max(1, bh) > 1.35) {
+        const drawH = 48;
+        const drawW = Math.min(200, Math.round((bw / Math.max(1, bh)) * drawH));
+        ctx.drawImage(
+          customBanner,
+          this.slice.sx,
+          this.slice.sy,
+          bw,
+          bh,
+          Math.round((VIEWPORT_W - drawW) * 0.5),
+          bannerY - 6,
+          drawW,
+          drawH,
+        );
+        return;
+      }
+    }
+
     const label = text.toUpperCase();
     const tw = font.measure(label, 2);
     const rx = Math.round((VIEWPORT_W - tw) * 0.5 - 14);

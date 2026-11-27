@@ -139,15 +139,19 @@ export class GameApp {
     this._renderOverlay();
     this._renderSingleFrame(0);
 
-    // Initialize asset pack manager (auto-detects local custom pack if present)
+    // Initialize asset pack manager (auto-enables local/cached custom pack unless user explicitly chose Built-In)
     void this._assets
       .init()
       .then(() => {
         if (this._disposed) return;
-        const shouldUsePack = this._settings.render.useCustomPack && this._assets.customPackAvailable;
+        const explicitPref = this._saveManager.getCustomPackPreference();
+        const shouldUsePack = this._assets.customPackAvailable && explicitPref !== 'builtin';
         this._assets.setUseCustomPack(shouldUsePack);
         this._settings.render.useCustomPack = this._assets.customPackEnabled;
         this._renderOverlay();
+        this._renderSingleFrame(
+          typeof performance !== 'undefined' ? performance.now() / 1000 : 0,
+        );
       })
       .catch(() => {
         // Built-in pixel atlas remains active on pack init errors
@@ -330,9 +334,11 @@ export class GameApp {
 
     for (const ev of events) {
       switch (ev.type) {
+        case 'ground_stomp':
         case 'stomp_impact':
           this._input.triggerHaptic('stomp');
           break;
+        case 'tongue_lash':
         case 'enemy_hit':
         case 'boss_hit':
           this._input.triggerHaptic('light');
@@ -639,12 +645,16 @@ export class GameApp {
         if (res.ok) {
           this._assets.setUseCustomPack(true);
           this._settings.render.useCustomPack = this._assets.customPackEnabled;
+          this._saveManager.setCustomPackPreference('custom');
           this._saveManager.saveSettings(this._settings);
           this._showToast(`CUSTOM PACK LOADED (${res.count} ASSETS)`);
         } else {
           this._showToast(res.message);
         }
         this._renderOverlay();
+        this._renderSingleFrame(
+          typeof performance !== 'undefined' ? performance.now() / 1000 : 0,
+        );
         return res;
       },
       onToggleCustomPack: (enabled) => {
@@ -656,9 +666,13 @@ export class GameApp {
         }
         this._assets.setUseCustomPack(enabled);
         this._settings.render.useCustomPack = this._assets.customPackEnabled;
+        this._saveManager.setCustomPackPreference(this._assets.customPackEnabled ? 'custom' : 'builtin');
         this._saveManager.saveSettings(this._settings);
         this._showToast(this._assets.customPackEnabled ? 'CUSTOM PACK ENABLED' : 'BUILT-IN PIXEL ART');
         this._renderOverlay();
+        this._renderSingleFrame(
+          typeof performance !== 'undefined' ? performance.now() / 1000 : 0,
+        );
         return this._assets.customPackEnabled;
       },
 
@@ -912,8 +926,12 @@ export class GameApp {
       toggleCustomPack: (enabled: boolean) => {
         this._assets.setUseCustomPack(enabled);
         this._settings.render.useCustomPack = this._assets.customPackEnabled;
+        this._saveManager.setCustomPackPreference(this._assets.customPackEnabled ? 'custom' : 'builtin');
         this._saveManager.saveSettings(this._settings);
         this._renderOverlay();
+        this._renderSingleFrame(
+          typeof performance !== 'undefined' ? performance.now() / 1000 : 0,
+        );
         return this._assets.customPackEnabled;
       },
       forceSave: () => {
