@@ -7,6 +7,7 @@
 
 import type {
   BiomeId,
+  CustomPackEntry,
   CustomPackManifest,
   HeroFormId,
   IAssetPackManager,
@@ -490,6 +491,16 @@ class CustomAssetPackManager implements IAssetPackManager {
       }
     }
     return img;
+  }
+
+  getEntry(key: string): CustomPackEntry | null {
+    if (!this.customPackEnabled || !this._manifest) {
+      return null;
+    }
+    const direct = this._manifest.entries[key];
+    if (direct) return direct;
+    const canonical = resolveLogicalAssetKey(key);
+    return canonical ? (this._manifest.entries[canonical] ?? null) : null;
   }
 
   getBiomeTileset(biome: BiomeId): HTMLCanvasElement | HTMLImageElement | null {

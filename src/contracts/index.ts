@@ -937,12 +937,50 @@ export interface SaveData {
   settings: GameSettings;
 }
 
+export interface SpriteFrameRect {
+  readonly x: number; // Top-left pixel X in PNG
+  readonly y: number; // Top-left pixel Y in PNG
+  readonly w: number;
+  readonly h: number;
+  readonly pivotX: number; // Normalized [0..1] (0.5 = center)
+  readonly pivotY: number; // Normalized [0..1] TOP-DOWN (1.0 = bottom/feet)
+}
+
+export interface SpriteAnimClip {
+  readonly frames: readonly number[]; // Indices into CustomPackEntry.frames
+  readonly fps: number;
+  readonly loop: boolean;
+}
+
+export interface TileLayoutMeta {
+  readonly tileSize: number; // 32
+  readonly format: 'strip16' | 'grid4x4';
+  readonly rows: number; // 2: row0 = 16-mask solid, row1 = extras
+  readonly hasInnerCorners?: boolean; // row1 cols 0..3: [TR-inner, TL-inner, BR-inner, BL-inner]
+  readonly innerCornerRow?: number; // 1
+  readonly variantCols?: readonly number[]; // row1 cols 4..7
+  readonly bgWallCols?: readonly number[]; // row1 cols 8..11
+}
+
+export interface ParallaxLayerMeta {
+  readonly scrollX: number;
+  readonly scrollY: number;
+  readonly anchorY: 'top' | 'center' | 'bottom';
+  readonly offsetY?: number;
+  readonly tileX: boolean;
+  readonly fillViewport?: boolean;
+}
+
 export interface CustomPackEntry {
   readonly key: string;
   readonly path: string;
   readonly width: number;
   readonly height: number;
   readonly category: 'hero' | 'tile' | 'enemy' | 'boss' | 'ui' | 'bg' | 'fx';
+  readonly frames?: readonly SpriteFrameRect[];
+  readonly clips?: Readonly<Record<string, SpriteAnimClip>>;
+  readonly tileLayout?: TileLayoutMeta;
+  readonly parallax?: ParallaxLayerMeta;
 }
 
 export interface CustomPackManifest {
@@ -960,6 +998,7 @@ export interface IAssetPackManager {
   setUseCustomPack(enabled: boolean): void;
   loadFromDirectoryPicker(): Promise<{ ok: boolean; count: number; message: string }>;
   getSprite(key: string): HTMLCanvasElement | HTMLImageElement | null;
+  getEntry(key: string): CustomPackEntry | null;
   getBiomeTileset(biome: BiomeId): HTMLCanvasElement | HTMLImageElement | null;
   getHeroSheet(form: HeroFormId): HTMLCanvasElement | HTMLImageElement | null;
   getAllRegisteredKeys(): string[];
