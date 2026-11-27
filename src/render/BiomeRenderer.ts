@@ -123,8 +123,9 @@ function wrap(val: number, period: number): number {
 
 export class BiomeRenderer {
   /**
-   * Midground atmospheric layer drawn AFTER 3-layer parallax and BEFORE world tiles.
-   * Gives deep environmental storytelling (sunbeams, bronze gears, circuit rings, eclipse aura, lanterns).
+   * Midground atmospheric layer drawn AFTER parallax and BEFORE world tiles.
+   * When customBgActive is true, gracefully dials back heavy procedural celestials/gears/bars
+   * so extracted multi-layer origin parallax backgrounds shine cleanly without washout or clash.
    */
   public renderMidground(
     ctx: CanvasRenderingContext2D,
@@ -133,6 +134,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    customBgActive = false,
   ): void {
     const pal = BIOME_PALETTES[state.biome];
     const prevAlpha = ctx.globalAlpha;
@@ -140,32 +142,32 @@ export class BiomeRenderer {
     switch (state.biome) {
       case 'MLAIR':
       case 'OPOUSO':
-        this.drawWarmSunbeams(ctx, pal, state.biome === 'OPOUSO', camX, timeSec);
+        this.drawWarmSunbeams(ctx, pal, state.biome === 'OPOUSO', camX, timeSec, customBgActive ? 0.45 : 1.0);
         break;
       case 'TDM':
-        this.drawTrailMidground(ctx, pal, camX, timeSec);
+        this.drawTrailMidground(ctx, pal, camX, timeSec, customBgActive);
         break;
       case 'FLIN':
       case 'AP':
-        this.drawCanopyLightShafts(ctx, pal, state.biome === 'FLIN', camX, timeSec);
+        this.drawCanopyLightShafts(ctx, pal, state.biome === 'FLIN', camX, timeSec, customBgActive ? 0.55 : 1.0);
         break;
       case 'ATVC':
-        this.drawVolcanicHeatHaze(ctx, pal, camX, camY, timeSec);
+        this.drawVolcanicHeatHaze(ctx, pal, camX, camY, timeSec, customBgActive);
         break;
       case 'DSI':
-        this.drawDesertSunShimmer(ctx, pal, camX, room.sandstormDir ?? 0, timeSec);
+        this.drawDesertSunShimmer(ctx, pal, camX, room.sandstormDir ?? 0, timeSec, customBgActive);
         break;
       case 'LAB':
-        this.drawLabyrinthGears(ctx, pal, camX, camY, timeSec);
+        this.drawLabyrinthGears(ctx, pal, camX, camY, timeSec, customBgActive ? 0.22 : 0.48);
         break;
       case 'TEMP':
-        this.drawTempleCircuitRings(ctx, pal, camX, camY, timeSec);
+        this.drawTempleCircuitRings(ctx, pal, camX, camY, timeSec, customBgActive ? 0.55 : 1.0);
         break;
       case 'EVIL':
-        this.drawNightmareEclipseAndLightning(ctx, pal, camX, timeSec);
+        this.drawNightmareEclipseAndLightning(ctx, pal, camX, timeSec, !customBgActive);
         break;
       case 'GSHIP':
-        this.drawGhostShipLanterns(ctx, pal, state.ghostShip.hazardTier, camX, timeSec);
+        this.drawGhostShipLanterns(ctx, pal, state.ghostShip.hazardTier, camX, timeSec, customBgActive ? 0.72 : 1.0);
         break;
     }
 
@@ -183,21 +185,23 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    customBgActive = false,
   ): void {
     const pal = BIOME_PALETTES[state.biome];
     const prevAlpha = ctx.globalAlpha;
+    const fgScale = customBgActive ? 0.85 : 1.0;
 
     switch (state.biome) {
       case 'MLAIR':
       case 'OPOUSO':
-        this.drawGoldenDustMotes(ctx, pal, state.biome === 'OPOUSO', camX, camY, timeSec);
+        this.drawGoldenDustMotes(ctx, pal, state.biome === 'OPOUSO', camX, camY, timeSec, fgScale);
         break;
       case 'TDM':
-        this.drawDandelionPollenAndBreeze(ctx, pal, camX, camY, timeSec);
+        this.drawDandelionPollenAndBreeze(ctx, pal, camX, camY, timeSec, fgScale);
         break;
       case 'FLIN':
       case 'AP':
-        this.drawForestSpores(ctx, pal, state.biome === 'FLIN', camX, camY, timeSec);
+        this.drawForestSpores(ctx, pal, state.biome === 'FLIN', camX, camY, timeSec, fgScale);
         break;
       case 'ATVC':
         this.drawVolcanicEmbersAndLavaWaves(ctx, pal, state, room, camX, camY, timeSec);
@@ -209,10 +213,10 @@ export class BiomeRenderer {
         this.drawForgeSparks(ctx, pal, camX, camY, timeSec);
         break;
       case 'TEMP':
-        this.drawAntigravScanlines(ctx, pal, camY, timeSec);
+        this.drawAntigravScanlines(ctx, pal, camY, timeSec, fgScale);
         break;
       case 'EVIL':
-        this.drawFloatingVioletRunes(ctx, pal, camX, camY, timeSec);
+        this.drawFloatingVioletRunes(ctx, pal, camX, camY, timeSec, fgScale);
         break;
       case 'GSHIP':
         this.drawGhostShipSwellsAndHazardPulse(ctx, pal, state, camX, timeSec);
@@ -232,6 +236,7 @@ export class BiomeRenderer {
     isVillage: boolean,
     camX: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const beamCount = 5;
     const parallax = Math.round(camX * PPU * 0.14);
@@ -241,7 +246,7 @@ export class BiomeRenderer {
     for (let b = 0; b < beamCount; b++) {
       const baseX = Math.round(wrap(b * 128 + 38 - parallax, VIEWPORT_W + 120) - 60);
       const beamW = 24 + (b % 3) * 10;
-      const pulse = 0.075 + 0.045 * Math.sin(timeSec * 0.9 + b * 1.7);
+      const pulse = (0.075 + 0.045 * Math.sin(timeSec * 0.9 + b * 1.7)) * alphaScale;
 
       // Stepped 16-bit diagonal sunbeam strips (4px vertical steps, slanted +1px X per 2px Y)
       ctx.globalAlpha = pulse;
@@ -272,6 +277,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const count = 18;
     const parX = camX * PPU * 0.32;
@@ -285,7 +291,7 @@ export class BiomeRenderer {
       const sx = Math.round(wrap(rawX, VIEWPORT_W));
       const sy = Math.round(wrap(rawY, VIEWPORT_H));
 
-      const twinkle = 0.35 + 0.55 * (0.5 + 0.5 * Math.sin(timeSec * 3.2 + ph * 2));
+      const twinkle = (0.35 + 0.55 * (0.5 + 0.5 * Math.sin(timeSec * 3.2 + ph * 2))) * alphaScale;
       ctx.globalAlpha = twinkle;
 
       const sz = SLOT_SIZE[i]!;
@@ -312,13 +318,15 @@ export class BiomeRenderer {
     pal: BiomePalette,
     camX: number,
     timeSec: number,
+    customBgActive = false,
   ): void {
     // Soft sunlit breeze shafts
     const parX = Math.round(camX * PPU * 0.12);
+    const shaftScale = customBgActive ? 0.4 : 1.0;
     ctx.fillStyle = pal.celestialColor;
     for (let b = 0; b < 3; b++) {
       const bx = Math.round(wrap(b * 204 + 64 - parX, VIEWPORT_W + 100) - 50);
-      ctx.globalAlpha = 0.06 + 0.03 * Math.sin(timeSec * 1.1 + b * 2.1);
+      ctx.globalAlpha = (0.06 + 0.03 * Math.sin(timeSec * 1.1 + b * 2.1)) * shaftScale;
       for (let y = 0; y < VIEWPORT_H - 40; y += 6) {
         ctx.fillRect(bx + (y >> 2), y, 28, 6);
       }
@@ -329,7 +337,7 @@ export class BiomeRenderer {
     for (let r = 0; r < 5; r++) {
       const rx = Math.round(wrap(r * 131 + timeSec * (26 + r * 4) - parX, VIEWPORT_W + 90) - 45);
       const ry = 42 + r * 38 + Math.round(Math.sin(timeSec * 1.6 + r * 1.3) * 6);
-      ctx.globalAlpha = 0.22;
+      ctx.globalAlpha = customBgActive ? 0.14 : 0.22;
       ctx.fillRect(rx, ry, 26, 1);
       ctx.fillRect(rx + 22, ry - 1, 8, 1);
       ctx.fillRect(rx + 28, ry - 2, 3, 1);
@@ -342,6 +350,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const parX = camX * PPU * 0.4;
     const parY = camY * PPU * 0.25;
@@ -355,7 +364,7 @@ export class BiomeRenderer {
         wrap(SLOT_SEED_Y[i]! + Math.sin(timeSec * 1.9 + ph) * 14 - timeSec * (4 * spd) + parY, VIEWPORT_H + 16) - 8,
       );
 
-      ctx.globalAlpha = 0.72;
+      ctx.globalAlpha = 0.72 * alphaScale;
       // Tiny dark-stem seed + fluffy cream/yellow dandelion crown
       ctx.fillStyle = pal.capDark;
       ctx.fillRect(px, py + 1, 1, 2);
@@ -391,6 +400,7 @@ export class BiomeRenderer {
     isInfested: boolean,
     camX: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const parX = Math.round(camX * PPU * 0.18);
     const shaftCol = isInfested ? pal.accentAlt : pal.celestialColor;
@@ -400,7 +410,7 @@ export class BiomeRenderer {
       const sway = Math.round(Math.sin(timeSec * 0.7 + s * 1.4) * 5);
       const baseX = Math.round(wrap(s * 108 + 22 - parX, VIEWPORT_W + 96) - 48) + sway;
       const w = 16 + (s & 1) * 12;
-      const alpha = 0.06 + 0.04 * Math.sin(timeSec * 1.2 + s * 2.0);
+      const alpha = (0.06 + 0.04 * Math.sin(timeSec * 1.2 + s * 2.0)) * alphaScale;
 
       ctx.globalAlpha = alpha;
       ctx.fillStyle = edgeCol;
@@ -427,6 +437,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const count = 22;
     const parX = camX * PPU * 0.36;
@@ -448,13 +459,13 @@ export class BiomeRenderer {
       const coreCol = isAlt ? (isInfested ? pal.accent : HIGHLIGHT_CREAM) : pal.capLight;
 
       // Soft pixel halo (5x5 cross)
-      ctx.globalAlpha = glow * 0.24;
+      ctx.globalAlpha = glow * 0.24 * alphaScale;
       ctx.fillStyle = haloCol;
       ctx.fillRect(sx - 2, sy - 1, 5, 3);
       ctx.fillRect(sx - 1, sy - 2, 3, 5);
 
       // Luminous pixel core
-      ctx.globalAlpha = 0.55 + glow * 0.4;
+      ctx.globalAlpha = (0.55 + glow * 0.4) * alphaScale;
       ctx.fillStyle = coreCol;
       ctx.fillRect(sx - 1, sy - 1, 2, 2);
       if (glow > 0.78) {
@@ -474,21 +485,25 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    customBgActive = false,
   ): void {
-    // Stepped molten underglow bands rising from bottom of caldera
-    ctx.fillStyle = pal.skyGlow;
-    ctx.globalAlpha = 0.14;
-    ctx.fillRect(0, VIEWPORT_H - 54, VIEWPORT_W, 54);
-    ctx.fillStyle = pal.capMid;
-    ctx.globalAlpha = 0.12;
-    ctx.fillRect(0, VIEWPORT_H - 28, VIEWPORT_W, 28);
+    // Stepped molten underglow bands (skip opaque washout bars over origin volcanic BG)
+    if (!customBgActive) {
+      ctx.fillStyle = pal.skyGlow;
+      ctx.globalAlpha = 0.14;
+      ctx.fillRect(0, VIEWPORT_H - 54, VIEWPORT_W, 54);
+      ctx.fillStyle = pal.capMid;
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(0, VIEWPORT_H - 28, VIEWPORT_W, 28);
+    }
 
     // Shimmering undulating pixel heat-haze bands drifting upward
     const parX = Math.round(camX * PPU * 0.2);
     const parY = Math.round(camY * PPU * 0.15);
+    const hazeScale = customBgActive ? 0.55 : 1.0;
     for (let h = 0; h < 8; h++) {
       const baseY = Math.round(wrap(VIEWPORT_H - h * 40 - timeSec * 14 + parY, VIEWPORT_H));
-      const alpha = 0.06 + 0.05 * Math.sin(timeSec * 3.8 + h * 1.1);
+      const alpha = (0.06 + 0.05 * Math.sin(timeSec * 3.8 + h * 1.1)) * hazeScale;
       ctx.globalAlpha = alpha;
       ctx.fillStyle = h % 2 === 0 ? pal.capLight : pal.accentAlt;
       for (let seg = 0; seg < 12; seg++) {
@@ -586,26 +601,30 @@ export class BiomeRenderer {
     camX: number,
     sandstormDir: -1 | 0 | 1,
     timeSec: number,
+    customBgActive = false,
   ): void {
-    // Blazing desert sun mirage halo in upper sky
-    const sunX = Math.round(wrap(468 - camX * PPU * 0.04, VIEWPORT_W));
-    const sunY = 54;
-    const pulse = Math.round(Math.sin(timeSec * 2.8) * 3);
+    // Blazing desert sun mirage halo in upper sky (Built-In only so it never doubles over origin sky)
+    if (!customBgActive) {
+      const sunX = Math.round(wrap(468 - camX * PPU * 0.04, VIEWPORT_W));
+      const sunY = 54;
+      const pulse = Math.round(Math.sin(timeSec * 2.8) * 3);
 
-    ctx.fillStyle = pal.celestialColor;
-    ctx.globalAlpha = 0.14;
-    this.drawPixelRing(ctx, sunX, sunY, 34 + pulse, 2, 32);
-    ctx.fillStyle = pal.celestialRing;
-    ctx.globalAlpha = 0.11;
-    this.drawPixelRing(ctx, sunX, sunY, 50 - pulse, 2, 32);
+      ctx.fillStyle = pal.celestialColor;
+      ctx.globalAlpha = 0.14;
+      this.drawPixelRing(ctx, sunX, sunY, 34 + pulse, 2, 32);
+      ctx.fillStyle = pal.celestialRing;
+      ctx.globalAlpha = 0.11;
+      this.drawPixelRing(ctx, sunX, sunY, 50 - pulse, 2, 32);
+    }
 
     // Horizon sun shimmer mirage bars
     const dir = sandstormDir !== 0 ? sandstormDir : -1;
+    const shimmerScale = customBgActive ? 0.5 : 1.0;
     ctx.fillStyle = pal.skyGlow;
     for (let band = 0; band < 6; band++) {
       const by = 176 + band * 22;
       const shift = Math.round(timeSec * (18 + band * 4) * dir);
-      ctx.globalAlpha = 0.08 + 0.04 * Math.sin(timeSec * 4.0 + band);
+      ctx.globalAlpha = (0.08 + 0.04 * Math.sin(timeSec * 4.0 + band)) * shimmerScale;
       for (let seg = 0; seg < 7; seg++) {
         const sx = Math.round(wrap(seg * 92 + band * 31 + shift, VIEWPORT_W + 70) - 35);
         const wave = Math.round(Math.sin(timeSec * 6.0 + seg + band) * 1);
@@ -677,6 +696,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    gearAlpha = 0.48,
   ): void {
     for (let g = 0; g < LAB_GEARS.length; g++) {
       const spec = LAB_GEARS[g]!;
@@ -692,11 +712,11 @@ export class BiomeRenderer {
       const gy = Math.round(baseY + Math.max(-28, Math.min(28, camY * 4)));
       const angle = timeSec * rotSpeed + g * 0.6;
 
-      ctx.globalAlpha = 0.48;
+      ctx.globalAlpha = gearAlpha;
       this.drawPixelGear(ctx, gx, gy, outerR, innerR, teeth, angle, BRONZE_DARK, BRONZE_MID, BRONZE_LIGHT);
 
       // Subtle arcane rivet glint at hub
-      ctx.globalAlpha = 0.35 + 0.2 * Math.sin(timeSec * 3 + g);
+      ctx.globalAlpha = (0.35 + 0.2 * Math.sin(timeSec * 3 + g)) * (gearAlpha / 0.48);
       ctx.fillStyle = g % 2 === 0 ? pal.accentAlt : pal.accent;
       ctx.fillRect(gx - 2, gy - 2, 4, 4);
     }
@@ -802,6 +822,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const parX = camX * PPU * 0.14;
     const vShift = Math.max(-24, Math.min(24, Math.round(camY * 3.5)));
@@ -815,7 +836,7 @@ export class BiomeRenderer {
       const nodes = spec[4];
 
       // Sacred circuit ring circumference
-      ctx.globalAlpha = 0.24 + 0.08 * Math.sin(timeSec * 2.5 + r);
+      ctx.globalAlpha = (0.24 + 0.08 * Math.sin(timeSec * 2.5 + r)) * alphaScale;
       ctx.fillStyle = pal.capMid;
       this.drawPixelRing(ctx, cx, cy, rad, 2, 48);
 
@@ -824,10 +845,10 @@ export class BiomeRenderer {
         const th = ang + (n / nodes) * TWO_PI;
         const nx = Math.round(cx + Math.cos(th) * rad);
         const ny = Math.round(cy + Math.sin(th) * rad);
-        ctx.globalAlpha = 0.42;
+        ctx.globalAlpha = 0.42 * alphaScale;
         ctx.fillStyle = OUTLINE_DARK;
         ctx.fillRect(nx - 2, ny - 2, 5, 5);
-        ctx.globalAlpha = 0.65;
+        ctx.globalAlpha = 0.65 * alphaScale;
         ctx.fillStyle = n % 2 === 0 ? pal.capLight : pal.accent;
         ctx.fillRect(nx - 1, ny - 1, 3, 3);
 
@@ -835,7 +856,7 @@ export class BiomeRenderer {
         const stubR = n % 2 === 0 ? rad + 7 : rad - 7;
         const sx = Math.round(cx + Math.cos(th) * stubR);
         const sy = Math.round(cy + Math.sin(th) * stubR);
-        ctx.globalAlpha = 0.36;
+        ctx.globalAlpha = 0.36 * alphaScale;
         ctx.fillStyle = pal.ambientMote;
         ctx.fillRect((nx + sx) >> 1, (ny + sy) >> 1, 2, 2);
       }
@@ -847,10 +868,11 @@ export class BiomeRenderer {
     pal: BiomePalette,
     camY: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     // 1. Subtle horizontal pulsing cyan antigravity scanlines rising smoothly upward
     const riseOff = Math.round(wrap(-timeSec * 22 + camY * PPU * 0.2, 16));
-    const pulse = 0.06 + 0.04 * Math.sin(timeSec * 3.8);
+    const pulse = (0.06 + 0.04 * Math.sin(timeSec * 3.8)) * alphaScale;
     ctx.fillStyle = pal.ambientMote;
     ctx.globalAlpha = pulse;
     for (let y = riseOff; y < VIEWPORT_H; y += 16) {
@@ -860,10 +882,10 @@ export class BiomeRenderer {
     // 2. Two brighter sweeping antigravity scan wave pulses climbing the screen
     for (let w = 0; w < 2; w++) {
       const waveY = Math.round(wrap(VIEWPORT_H - timeSec * 52 + w * (VIEWPORT_H * 0.5), VIEWPORT_H));
-      ctx.globalAlpha = 0.16;
+      ctx.globalAlpha = 0.16 * alphaScale;
       ctx.fillStyle = pal.capMid;
       ctx.fillRect(0, waveY - 1, VIEWPORT_W, 3);
-      ctx.globalAlpha = 0.28;
+      ctx.globalAlpha = 0.28 * alphaScale;
       ctx.fillStyle = pal.capLight;
       ctx.fillRect(0, waveY, VIEWPORT_W, 1);
     }
@@ -891,37 +913,40 @@ export class BiomeRenderer {
     pal: BiomePalette,
     camX: number,
     timeSec: number,
+    drawEclipseDisk = true,
   ): void {
-    // 1. Massive pulsing Eclipse Aura high in the nightmare sky
-    const ex = Math.round(HALF_W - camX * PPU * 0.05);
-    const ey = 74;
-    const coronaPulse = Math.round(Math.sin(timeSec * 3.0) * 3);
+    // 1. Massive pulsing Eclipse Aura high in the nightmare sky (skip when custom animated origin sky is active!)
+    if (drawEclipseDisk) {
+      const ex = Math.round(HALF_W - camX * PPU * 0.05);
+      const ey = 74;
+      const coronaPulse = Math.round(Math.sin(timeSec * 3.0) * 3);
 
-    // Outer crimson-violet glow rings
-    ctx.globalAlpha = 0.16;
-    ctx.fillStyle = pal.skyGlow;
-    this.drawPixelDisk(ctx, ex, ey, 58 + coronaPulse);
-    ctx.globalAlpha = 0.24;
-    ctx.fillStyle = pal.capMid;
-    this.drawPixelRing(ctx, ex, ey, 46 + coronaPulse, 4, 48);
+      // Outer crimson-violet glow rings
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = pal.skyGlow;
+      this.drawPixelDisk(ctx, ex, ey, 58 + coronaPulse);
+      ctx.globalAlpha = 0.24;
+      ctx.fillStyle = pal.capMid;
+      this.drawPixelRing(ctx, ex, ey, 46 + coronaPulse, 4, 48);
 
-    // Blazing crimson eclipse rim + eldritch green spark corona
-    ctx.globalAlpha = 0.65;
-    ctx.fillStyle = pal.celestialColor;
-    this.drawPixelRing(ctx, ex, ey, 34, 3, 40);
-    ctx.globalAlpha = 0.55;
-    ctx.fillStyle = pal.celestialRing;
-    for (let s = 0; s < 8; s++) {
-      const th = (s / 8) * TWO_PI + timeSec * 0.5;
-      const rx = Math.round(ex + Math.cos(th) * (39 + (s & 1) * 4));
-      const ry = Math.round(ey + Math.sin(th) * (39 + (s & 1) * 4));
-      ctx.fillRect(rx - 1, ry - 1, 2, 2);
+      // Blazing crimson eclipse rim + eldritch green spark corona
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle = pal.celestialColor;
+      this.drawPixelRing(ctx, ex, ey, 34, 3, 40);
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = pal.celestialRing;
+      for (let s = 0; s < 8; s++) {
+        const th = (s / 8) * TWO_PI + timeSec * 0.5;
+        const rx = Math.round(ex + Math.cos(th) * (39 + (s & 1) * 4));
+        const ry = Math.round(ey + Math.sin(th) * (39 + (s & 1) * 4));
+        ctx.fillRect(rx - 1, ry - 1, 2, 2);
+      }
+
+      // Pitch-void eclipsed core
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = OUTLINE_DARK;
+      this.drawPixelDisk(ctx, ex, ey, 31);
     }
-
-    // Pitch-void eclipsed core
-    ctx.globalAlpha = 0.88;
-    ctx.fillStyle = OUTLINE_DARK;
-    this.drawPixelDisk(ctx, ex, ey, 31);
 
     // 2. Periodic deterministic crimson lightning flickers!
     const cycle = timeSec % 3.6;
@@ -964,6 +989,7 @@ export class BiomeRenderer {
     camX: number,
     camY: number,
     timeSec: number,
+    alphaScale = 1.0,
   ): void {
     const parX = camX * PPU * 0.34;
     const parY = camY * PPU * 0.24;
@@ -978,7 +1004,7 @@ export class BiomeRenderer {
         wrap(SLOT_SEED_Y[i]! - timeSec * (11 * spd) + parY, VIEWPORT_H),
       );
       const glyph = RUNE_GLYPHS[i & 3]!;
-      const pulse = 0.45 + 0.45 * Math.sin(timeSec * 3.2 + ph * 2);
+      const pulse = (0.45 + 0.45 * Math.sin(timeSec * 3.2 + ph * 2)) * alphaScale;
 
       // Dark-plum 1px outline shadow behind rune
       ctx.globalAlpha = pulse * 0.65;
@@ -1020,6 +1046,7 @@ export class BiomeRenderer {
     hazardTier: 0 | 1 | 2,
     camX: number,
     timeSec: number,
+    haloScale = 1.0,
   ): void {
     const swayAmp = hazardTier === 2 ? 0.24 : hazardTier === 1 ? 0.16 : 0.1;
     const swayFreq = hazardTier === 2 ? 2.8 : hazardTier === 1 ? 2.1 : 1.5;
@@ -1038,9 +1065,9 @@ export class BiomeRenderer {
       const flicker = 0.85 + 0.15 * Math.sin(timeSec * 9.0 + i * 2.4);
       const glowCol = hazardTier === 2 ? HAZARD_CRIMSON : pal.accent;
       ctx.fillStyle = glowCol;
-      ctx.globalAlpha = 0.08 * flicker;
+      ctx.globalAlpha = 0.08 * flicker * haloScale;
       this.drawPixelDisk(ctx, lx, ly + 4, 34);
-      ctx.globalAlpha = 0.14 * flicker;
+      ctx.globalAlpha = 0.14 * flicker * haloScale;
       this.drawPixelDisk(ctx, lx, ly + 4, 20);
 
       // Swaying pixel iron chain

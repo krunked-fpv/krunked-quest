@@ -1,8 +1,10 @@
 /**
- * Krunked Quest — Tile, Parallax & Interactive Prop Renderer
- * Renders 3-layer atmospheric pixel-art parallax, 16-mask autotiled biome terrain,
- * animated hazards, moving platforms, and interactive props/NPCs.
- * Strictly integer-snapped, zero per-frame allocations!
+ * Krunked Quest — Tile, Multi-Layer Parallax & Interactive Prop Renderer
+ * Supports both Custom Pack origin assets (normalized 512x64 16-mask + inner-corner
+ * autotiles, 4-layer ParallaxLayerMeta backdrops, biome deco, oriented spikes,
+ * animated special tiles, interactive props & foot-pivoted Hub NPCs) and upgraded
+ * Built-In procedural art via BiomeArtBaker.
+ * Strictly 576x324 (32 PPU) nearest-neighbor, integer pixel-snapped, zero per-frame allocations!
  */
 
 import {
@@ -11,12 +13,17 @@ import {
   VIEWPORT_H,
   VIEWPORT_W,
   type BiomeId,
+  type CustomPackEntry,
   type DeviceGlyphMap,
+  type HeroFormId,
   type IAssetPackManager,
   type InteractivePropDef,
+  type ParallaxLayerMeta,
   type RoomDef,
   type ShopId,
   type SimState,
+  type SpriteAnimClip,
+  type SpriteFrameRect,
 } from '../contracts/index.js';
 import {
   BIOME_PALETTES,
@@ -25,6 +32,7 @@ import {
   OUTLINE_DARK,
   UI_COLORS,
 } from '../assets/palettes.js';
+import { getBuiltInWorldArt } from '../assets/BiomeArtBaker.js';
 import type { ProceduralPixelAtlas } from '../assets/ProceduralPixelAtlas.js';
 import type { PixelFont } from './PixelFont.js';
 
@@ -40,6 +48,88 @@ const NPC_DISPLAY_NAMES: Readonly<Record<ShopId, string>> = {
   codex: 'CODEX',
 };
 
+// Precomputed logical asset keys (zero per-frame string allocations in hot render loops)
+const BIOME_BG_KEYS: Readonly<Record<BiomeId, readonly [string, string, string, string]>> = {
+  MLAIR: ['bg/MLAIR', 'bg/MLAIR_far', 'bg/MLAIR_mid', 'bg/MLAIR_near'],
+  OPOUSO: ['bg/OPOUSO', 'bg/OPOUSO_far', 'bg/OPOUSO_mid', 'bg/OPOUSO_near'],
+  TDM: ['bg/TDM', 'bg/TDM_far', 'bg/TDM_mid', 'bg/TDM_near'],
+  FLIN: ['bg/FLIN', 'bg/FLIN_far', 'bg/FLIN_mid', 'bg/FLIN_near'],
+  AP: ['bg/AP', 'bg/AP_far', 'bg/AP_mid', 'bg/AP_near'],
+  ATVC: ['bg/ATVC', 'bg/ATVC_far', 'bg/ATVC_mid', 'bg/ATVC_near'],
+  DSI: ['bg/DSI', 'bg/DSI_far', 'bg/DSI_mid', 'bg/DSI_near'],
+  LAB: ['bg/LAB', 'bg/LAB_far', 'bg/LAB_mid', 'bg/LAB_near'],
+  TEMP: ['bg/TEMP', 'bg/TEMP_far', 'bg/TEMP_mid', 'bg/TEMP_near'],
+  EVIL: ['bg/EVIL', 'bg/EVIL_far', 'bg/EVIL_mid', 'bg/EVIL_near'],
+  GSHIP: ['bg/GSHIP', 'bg/GSHIP_far', 'bg/GSHIP_mid', 'bg/GSHIP_near'],
+};
+
+const BIOME_TILE_KEYS: Readonly<Record<BiomeId, string>> = {
+  MLAIR: 'tiles/MLAIR',
+  OPOUSO: 'tiles/OPOUSO',
+  TDM: 'tiles/TDM',
+  FLIN: 'tiles/FLIN',
+  AP: 'tiles/AP',
+  ATVC: 'tiles/ATVC',
+  DSI: 'tiles/DSI',
+  LAB: 'tiles/LAB',
+  TEMP: 'tiles/TEMP',
+  EVIL: 'tiles/EVIL',
+  GSHIP: 'tiles/GSHIP',
+};
+
+const BIOME_DECO_KEYS: Readonly<Record<BiomeId, string>> = {
+  MLAIR: 'deco/MLAIR',
+  OPOUSO: 'deco/OPOUSO',
+  TDM: 'deco/TDM',
+  FLIN: 'deco/FLIN',
+  AP: 'deco/AP',
+  ATVC: 'deco/ATVC',
+  DSI: 'deco/DSI',
+  LAB: 'deco/LAB',
+  TEMP: 'deco/TEMP',
+  EVIL: 'deco/EVIL',
+  GSHIP: 'deco/GSHIP',
+};
+
+const NPC_KEYS: Readonly<Record<ShopId, string>> = {
+  vespera: 'npc/vespera',
+  orla: 'npc/orla',
+  barnaby: 'npc/barnaby',
+  garron: 'npc/garron',
+  barnacle: 'npc/barnacle',
+  codex: 'npc/codex',
+};
+
+const FORM_TOTEM_KEYS: Readonly<Record<HeroFormId, string>> = {
+  krunk_basic: 'tile/form_totem',
+  krunk_fire: 'tile/form_totem_fire',
+  krunk_leaf: 'tile/form_totem_leaf',
+  krunk_rock: 'tile/form_totem_rock',
+  krunk_electric: 'tile/form_totem_electric',
+  krunk_shadow: 'tile/form_totem',
+};
+
+const BUILTIN_TOTEM_KEYS: Readonly<Record<HeroFormId, string>> = {
+  krunk_basic: 'totem_krunk_basic',
+  krunk_fire: 'totem_krunk_fire',
+  krunk_leaf: 'totem_krunk_leaf',
+  krunk_rock: 'totem_krunk_rock',
+  krunk_electric: 'totem_krunk_electric',
+  krunk_shadow: 'totem_krunk_shadow',
+};
+
+const DEFAULT_PARALLAX_LAYERS: readonly [
+  ParallaxLayerMeta,
+  ParallaxLayerMeta,
+  ParallaxLayerMeta,
+  ParallaxLayerMeta,
+] = [
+  { scrollX: 0.03, scrollY: 0.01, anchorY: 'top', tileX: true, fillViewport: true },
+  { scrollX: 0.08, scrollY: 0.04, anchorY: 'bottom', tileX: true, fillViewport: false },
+  { scrollX: 0.2, scrollY: 0.08, anchorY: 'bottom', tileX: true, fillViewport: false },
+  { scrollX: 0.42, scrollY: 0.14, anchorY: 'bottom', tileX: true, fillViewport: false },
+];
+
 function isDrawable(
   img: HTMLCanvasElement | HTMLImageElement | null | undefined,
 ): img is HTMLCanvasElement | HTMLImageElement {
@@ -50,16 +140,117 @@ function isDrawable(
   return img.width > 0 && img.height > 0;
 }
 
+function getDrawableW(img: HTMLCanvasElement | HTMLImageElement): number {
+  if (typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement) {
+    return img.naturalWidth || img.width;
+  }
+  return img.width;
+}
+
+function getDrawableH(img: HTMLCanvasElement | HTMLImageElement): number {
+  if (typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement) {
+    return img.naturalHeight || img.height;
+  }
+  return img.height;
+}
+
 function isSolidMaskTile(code: number): boolean {
   return code === TileCode.Solid || code === TileCode.SecretWall;
 }
 
 function wrapOffset(val: number, period: number): number {
+  if (period <= 0) return 0;
   const m = val % period;
   return m < 0 ? m + period : m;
 }
 
+function tileHash(tx: number, ty: number): number {
+  let h = (Math.imul(tx, 73856093) ^ Math.imul(ty, 19349663)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * Selects a SpriteFrameRect from a CustomPackEntry's clip or frames list (zero allocation).
+ */
+function selectEntryFrame(
+  entry: CustomPackEntry | null,
+  clipName: string | null,
+  timeSec: number,
+  fixedIndex = -1,
+): SpriteFrameRect | null {
+  if (!entry || !entry.frames || entry.frames.length === 0) return null;
+  const frames = entry.frames;
+
+  if (fixedIndex >= 0) {
+    return frames[fixedIndex % frames.length] ?? frames[0] ?? null;
+  }
+
+  let clip: SpriteAnimClip | undefined;
+  if (entry.clips) {
+    if (clipName && entry.clips[clipName]) {
+      clip = entry.clips[clipName];
+    } else if (entry.clips.idle) {
+      clip = entry.clips.idle;
+    }
+  }
+
+  if (clip && clip.frames.length > 0) {
+    const fps = clip.fps > 0 ? clip.fps : 6;
+    const rawIdx = Math.floor(timeSec * fps);
+    const step = clip.loop
+      ? rawIdx % clip.frames.length
+      : Math.min(rawIdx, clip.frames.length - 1);
+    const frameIdx = clip.frames[step] ?? 0;
+    return frames[frameIdx] ?? frames[0] ?? null;
+  }
+
+  if (frames.length === 1) return frames[0] ?? null;
+  const idx = Math.floor(timeSec * 6) % frames.length;
+  return frames[idx] ?? frames[0] ?? null;
+}
+
+/**
+ * Checks whether a Custom Pack biome tileset is cleanly normalized (16-mask strip or 4x4 grid)
+ * so we NEVER blindly slice un-normalized padded Unity atlases (e.g. 292x292 / 220x220 / 256x256).
+ */
+function isNormalizedCustomTileset(
+  img: HTMLCanvasElement | HTMLImageElement,
+  entry: CustomPackEntry | null,
+): boolean {
+  const layout = entry?.tileLayout;
+  const w = getDrawableW(img);
+  const h = getDrawableH(img);
+  if (layout) {
+    const ts = layout.tileSize > 0 ? layout.tileSize : 32;
+    if (layout.format === 'strip16') {
+      return w >= ts * 16 && h >= ts;
+    }
+    if (layout.format === 'grid4x4') {
+      return w >= ts * 4 && h >= ts * 4;
+    }
+  }
+  // Legacy fallback: accept only exact unpadded 512x32*N 16-mask strip or exact 128x128 4x4 grid
+  if (w === 512 && h >= 32 && (h & 31) === 0) return true;
+  if (w === 128 && h === 128) return true;
+  return false;
+}
+
 export class TileRenderer {
+  /**
+   * Returns true when Custom Pack has at least one drawable parallax layer for this biome.
+   */
+  public hasCustomParallax(biome: BiomeId, customPack: IAssetPackManager | null): boolean {
+    if (!customPack || !customPack.customPackEnabled) return false;
+    const keys = BIOME_BG_KEYS[biome];
+    for (let i = 0; i < 4; i++) {
+      if (isDrawable(customPack.getSprite(keys[i]!))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public renderParallax(
     ctx: CanvasRenderingContext2D,
     biome: BiomeId,
@@ -67,23 +258,56 @@ export class TileRenderer {
     camY: number,
     timeSec: number,
     atlas: ProceduralPixelAtlas,
+    customPack: IAssetPackManager | null = null,
   ): void {
-    const pSet = atlas.biomeParallax.get(biome);
+    const builtInArt = getBuiltInWorldArt();
+    const pSet = builtInArt?.biomeParallax.get(biome) ?? atlas.biomeParallax.get(biome) ?? null;
+
+    if (customPack && customPack.customPackEnabled && this.hasCustomParallax(biome, customPack)) {
+      const keys = BIOME_BG_KEYS[biome];
+      const skyImg = customPack.getSprite(keys[0]);
+
+      // Base sky undercoat: use Built-In sky if sky layer missing, otherwise biome sky gradient safety fill
+      if (!isDrawable(skyImg)) {
+        if (pSet) {
+          ctx.drawImage(pSet.sky, 0, 0);
+        } else {
+          ctx.fillStyle = BIOME_PALETTES[biome].skyTop;
+          ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
+        }
+      } else {
+        const pal = BIOME_PALETTES[biome];
+        ctx.fillStyle = pal.skyTop;
+        ctx.fillRect(0, 0, VIEWPORT_W, HALF_H);
+        ctx.fillStyle = pal.skyBot;
+        ctx.fillRect(0, HALF_H, VIEWPORT_W, VIEWPORT_H - HALF_H);
+      }
+
+      // Composite all 4 authentic origin parallax layers (sky -> far -> mid -> near)
+      for (let i = 0; i < 4; i++) {
+        const key = keys[i]!;
+        const img = customPack.getSprite(key);
+        if (!isDrawable(img)) continue;
+        const entry = customPack.getEntry(key);
+        const meta = entry?.parallax ?? DEFAULT_PARALLAX_LAYERS[i]!;
+        this.drawParallaxLayer(ctx, img, entry, meta, camX, camY, timeSec);
+      }
+      return;
+    }
+
+    // Built-In upgraded 4-layer procedural pixel-art parallax
     if (!pSet) {
       ctx.fillStyle = BIOME_PALETTES[biome].skyTop;
       ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
       return;
     }
 
-    // Layer 0: Banded 16-bit sky + celestial body
     ctx.drawImage(pSet.sky, 0, 0);
 
-    // Subtle vertical camera shift clamped cleanly so horizons never expose gaps
     const vShiftFar = Math.max(-24, Math.min(24, Math.round(camY * 2.5)));
     const vShiftMid = Math.max(-36, Math.min(36, Math.round(camY * 5.0)));
     const vShiftNear = Math.max(-44, Math.min(44, Math.round(camY * 8.0)));
 
-    // Layer 1: Far silhouettes (0.08x horizontal scroll + subtle drift)
     const farW = pSet.far.width;
     const farOff = Math.round(wrapOffset(camX * PPU * 0.08 + timeSec * 1.5, farW));
     const farY = 124 + vShiftFar;
@@ -91,7 +315,6 @@ export class TileRenderer {
       ctx.drawImage(pSet.far, x, farY);
     }
 
-    // Layer 2: Mid silhouettes (0.20x horizontal scroll)
     const midW = pSet.mid.width;
     const midOff = Math.round(wrapOffset(camX * PPU * 0.2, midW));
     const midY = 148 + vShiftMid;
@@ -99,12 +322,75 @@ export class TileRenderer {
       ctx.drawImage(pSet.mid, x, midY);
     }
 
-    // Layer 3: Near silhouettes (0.42x horizontal scroll)
     const nearW = pSet.near.width;
     const nearOff = Math.round(wrapOffset(camX * PPU * 0.42, nearW));
     const nearY = 192 + vShiftNear;
     for (let x = -nearOff; x < VIEWPORT_W; x += nearW) {
       ctx.drawImage(pSet.near, x, nearY);
+    }
+  }
+
+  private drawParallaxLayer(
+    ctx: CanvasRenderingContext2D,
+    img: HTMLCanvasElement | HTMLImageElement,
+    entry: CustomPackEntry | null,
+    meta: ParallaxLayerMeta,
+    camX: number,
+    camY: number,
+    timeSec: number,
+  ): void {
+    const frame = selectEntryFrame(entry, 'idle', timeSec);
+    const sx = frame ? frame.x : 0;
+    const sy = frame ? frame.y : 0;
+    const sw = frame ? frame.w : getDrawableW(img);
+    const sh = frame ? frame.h : getDrawableH(img);
+    if (sw < 4 || sh < 4) return;
+
+    let drawW = sw;
+    let drawH = sh;
+    if (meta.fillViewport) {
+      let scale = 1;
+      if (sh < VIEWPORT_H) {
+        scale = VIEWPORT_H / sh;
+      }
+      if (!meta.tileX && sw * scale < VIEWPORT_W) {
+        scale = VIEWPORT_W / sw;
+      }
+      if (scale > 1.001) {
+        drawW = Math.round(sw * scale);
+        drawH = Math.round(sh * scale);
+      }
+    }
+
+    let baseY = 0;
+    if (meta.anchorY === 'center') {
+      baseY = Math.round((VIEWPORT_H - drawH) * 0.5);
+    } else if (meta.anchorY === 'bottom') {
+      baseY = VIEWPORT_H - drawH;
+    }
+    const offY = Math.round(meta.offsetY ?? 0);
+    const rawShiftY = Math.round((camY - 5.5) * PPU * meta.scrollY);
+    let dy = baseY + offY + Math.max(-40, Math.min(40, rawShiftY));
+
+    if (meta.fillViewport && drawH >= VIEWPORT_H) {
+      const minDy = VIEWPORT_H - drawH;
+      if (dy < minDy) dy = minDy;
+      if (dy > 0) dy = 0;
+    }
+
+    if (meta.tileX) {
+      const offX = Math.round(wrapOffset(camX * PPU * meta.scrollX, drawW));
+      for (let x = -offX; x < VIEWPORT_W; x += drawW) {
+        ctx.drawImage(img, sx, sy, sw, sh, x, dy, drawW, drawH);
+      }
+    } else {
+      let dx = Math.round((VIEWPORT_W - drawW) * 0.5 - (camX - 9) * PPU * meta.scrollX);
+      if (meta.fillViewport && drawW >= VIEWPORT_W) {
+        const minDx = VIEWPORT_W - drawW;
+        if (dx < minDx) dx = minDx;
+        if (dx > 0) dx = 0;
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, drawW, drawH);
     }
   }
 
@@ -121,19 +407,59 @@ export class TileRenderer {
     const tiles = state.roomTiles;
     const rw = room.widthTiles;
     const rh = room.heightTiles;
+    const builtInArt = getBuiltInWorldArt();
+    const specialMap = builtInArt?.specialTiles ?? atlas.specialTiles;
 
-    // Resolve biome tileset (Custom Pack override -> ProceduralPixelAtlas fallback)
-    const customTileset = customPack ? customPack.getBiomeTileset(state.biome) : null;
-    const tileset = isDrawable(customTileset)
-      ? customTileset
-      : atlas.biomeTilesets.get(state.biome) ?? null;
-    const decoSheet = atlas.biomeDeco.get(state.biome) ?? null;
+    // Resolve biome tileset (only use Custom Pack tileset when cleanly normalized!)
+    const rawCustomTileset = customPack ? customPack.getBiomeTileset(state.biome) : null;
+    const customTileEntry = customPack ? customPack.getEntry(BIOME_TILE_KEYS[state.biome]) : null;
+    const useCustomTileset =
+      isDrawable(rawCustomTileset) && isNormalizedCustomTileset(rawCustomTileset, customTileEntry);
+    const tileset = useCustomTileset
+      ? rawCustomTileset
+      : builtInArt?.biomeTilesets.get(state.biome) ?? atlas.biomeTilesets.get(state.biome) ?? null;
 
-    // Determine whether tileset is 16x1 strip (512x32) or 4x4 grid (128x128)
-    const tilesetIs4x4 =
-      tileset !== null && tileset.width < 512 && tileset.width >= 128 && tileset.height >= 128;
+    const tileLayout = useCustomTileset ? customTileEntry?.tileLayout ?? null : null;
+    const tileSize = tileLayout && tileLayout.tileSize > 0 ? tileLayout.tileSize : 32;
+    const tilesetIs4x4 = useCustomTileset
+      ? tileLayout
+        ? tileLayout.format === 'grid4x4'
+        : tileset !== null && getDrawableW(tileset) === 128 && getDrawableH(tileset) === 128
+      : false;
+    const hasCustomInnerCorners = Boolean(
+      useCustomTileset &&
+        tileLayout?.hasInnerCorners &&
+        tileset !== null &&
+        getDrawableH(tileset) >= ((tileLayout.innerCornerRow ?? 1) + 1) * tileSize,
+    );
+    const customInnerRowY = (tileLayout?.innerCornerRow ?? 1) * tileSize;
+    const customVariantCols =
+      useCustomTileset &&
+      tileLayout?.variantCols &&
+      tileLayout.variantCols.length > 0 &&
+      tileset !== null &&
+      getDrawableH(tileset) >= tileSize * 2
+        ? tileLayout.variantCols
+        : null;
 
-    // Visible tile bounds (small 1-tile padding covers zoom & camera shake cleanly)
+    const builtInInnerCorners = !useCustomTileset
+      ? builtInArt?.biomeInnerCorners.get(state.biome) ?? null
+      : null;
+    const builtInVariantRows =
+      !useCustomTileset && tileset !== null ? Math.max(1, (getDrawableH(tileset) / 32) | 0) : 1;
+
+    // Biome deco (Origin deco/<BIOME> when Custom Pack active; Built-In deco only in Built-In mode)
+    const customDecoImg = customPack ? customPack.getSprite(BIOME_DECO_KEYS[state.biome]) : null;
+    const customDecoEntry = customPack ? customPack.getEntry(BIOME_DECO_KEYS[state.biome]) : null;
+    const customDecoFrames =
+      isDrawable(customDecoImg) && customDecoEntry?.frames && customDecoEntry.frames.length > 0
+        ? customDecoEntry.frames
+        : null;
+    const builtInDecoSheet = !useCustomTileset
+      ? builtInArt?.biomeDeco.get(state.biome) ?? atlas.biomeDeco.get(state.biome) ?? null
+      : null;
+
+    // Visible tile bounds (1-tile padding covers zoom & camera shake cleanly)
     const minTx = Math.max(0, Math.floor(camX - 10.5));
     const maxTx = Math.min(rw - 1, Math.ceil(camX + 10.5));
     const minTy = Math.max(0, Math.floor(camY - 6.5));
@@ -142,6 +468,7 @@ export class TileRenderer {
     const anim2 = ((timeSec * 4) | 0) & 1;
     const anim4 = ((timeSec * 6) | 0) & 3;
     const hasSecretSight = (state.progress.upgradeLevels.ViewSecretAreas ?? 0) > 0;
+    const halfTs = tileSize >> 1;
 
     for (let ty = minTy; ty <= maxTy; ty++) {
       const rowOff = ty * rw;
@@ -159,26 +486,102 @@ export class TileRenderer {
             const down = ty - 1 < 0 || isSolidMaskTile(tiles[(ty - 1) * rw + tx]!);
             const left = tx - 1 < 0 || isSolidMaskTile(tiles[rowOff + tx - 1]!);
             const mask = (up ? 1 : 0) | (right ? 2 : 0) | (down ? 4 : 0) | (left ? 8 : 0);
+            const tHash = tileHash(tx, ty);
 
             if (tilesetIs4x4) {
               const col = mask & 3;
               const row = (mask >> 2) & 3;
-              ctx.drawImage(tileset, col * 32, row * 32, 32, 32, sx, sy, 32, 32);
+              ctx.drawImage(tileset, col * tileSize, row * tileSize, tileSize, tileSize, sx, sy, 32, 32);
+            } else if (useCustomTileset) {
+              // Normalized 512x64 strip16: interior solid variants (mask===15) pull from row 1 variantCols
+              if (mask === 15 && customVariantCols !== null && (tHash & 3) !== 0) {
+                const vCol = customVariantCols[tHash % customVariantCols.length]!;
+                ctx.drawImage(tileset, vCol * tileSize, tileSize, tileSize, tileSize, sx, sy, 32, 32);
+              } else {
+                ctx.drawImage(tileset, mask * tileSize, 0, tileSize, tileSize, sx, sy, 32, 32);
+              }
+
+              // Concave inner-corner 16x16 quadrant compositing from row 1 cols 0..3 ([TR, TL, BR, BL])
+              if (hasCustomInnerCorners) {
+                if (up && right && ty + 1 < rh && tx + 1 < rw && !isSolidMaskTile(tiles[(ty + 1) * rw + tx + 1]!)) {
+                  ctx.drawImage(tileset, halfTs, customInnerRowY, halfTs, halfTs, sx + 16, sy, 16, 16);
+                }
+                if (up && left && ty + 1 < rh && tx - 1 >= 0 && !isSolidMaskTile(tiles[(ty + 1) * rw + tx - 1]!)) {
+                  ctx.drawImage(tileset, tileSize, customInnerRowY, halfTs, halfTs, sx, sy, 16, 16);
+                }
+                if (down && right && ty - 1 >= 0 && tx + 1 < rw && !isSolidMaskTile(tiles[(ty - 1) * rw + tx + 1]!)) {
+                  ctx.drawImage(
+                    tileset,
+                    tileSize * 2 + halfTs,
+                    customInnerRowY + halfTs,
+                    halfTs,
+                    halfTs,
+                    sx + 16,
+                    sy + 16,
+                    16,
+                    16,
+                  );
+                }
+                if (down && left && ty - 1 >= 0 && tx - 1 >= 0 && !isSolidMaskTile(tiles[(ty - 1) * rw + tx - 1]!)) {
+                  ctx.drawImage(
+                    tileset,
+                    tileSize * 3,
+                    customInnerRowY + halfTs,
+                    halfTs,
+                    halfTs,
+                    sx,
+                    sy + 16,
+                    16,
+                    16,
+                  );
+                }
+              }
             } else {
-              ctx.drawImage(tileset, mask * 32, 0, 32, 32, sx, sy, 32, 32);
+              // Built-In upgraded 3-variant 16-mask strip + crisp 8x8 inner-corner joins
+              const vRow = builtInVariantRows > 1 ? tHash % builtInVariantRows : 0;
+              ctx.drawImage(tileset, mask * 32, vRow * 32, 32, 32, sx, sy, 32, 32);
+
+              if (builtInInnerCorners) {
+                if (up && left && ty + 1 < rh && tx - 1 >= 0 && !isSolidMaskTile(tiles[(ty + 1) * rw + tx - 1]!)) {
+                  ctx.drawImage(builtInInnerCorners, 0, 0, 8, 8, sx, sy, 8, 8);
+                }
+                if (up && right && ty + 1 < rh && tx + 1 < rw && !isSolidMaskTile(tiles[(ty + 1) * rw + tx + 1]!)) {
+                  ctx.drawImage(builtInInnerCorners, 8, 0, 8, 8, sx + 24, sy, 8, 8);
+                }
+                if (down && left && ty - 1 >= 0 && tx - 1 >= 0 && !isSolidMaskTile(tiles[(ty - 1) * rw + tx - 1]!)) {
+                  ctx.drawImage(builtInInnerCorners, 16, 0, 8, 8, sx, sy + 24, 8, 8);
+                }
+                if (down && right && ty - 1 >= 0 && tx + 1 < rw && !isSolidMaskTile(tiles[(ty - 1) * rw + tx + 1]!)) {
+                  ctx.drawImage(builtInInnerCorners, 24, 0, 8, 8, sx + 24, sy + 24, 8, 8);
+                }
+              }
             }
 
-            // Lush biome decorative tufts/flowers atop exposed surface tiles
-            if (!up && code === TileCode.Solid && decoSheet) {
-              const decoHash = ((tx * 37 + ty * 17) ^ (tx * 13)) & 15;
-              if (decoHash < 8) {
-                ctx.drawImage(decoSheet, decoHash * 16, 0, 16, 16, sx + ((tx * 7) & 15), sy - 15, 16, 16);
+            // Surface biome foliage/deco tufts atop exposed floor tiles with empty air above
+            if (!up && code === TileCode.Solid && ty + 1 < rh && tiles[(ty + 1) * rw + tx] === TileCode.Empty) {
+              if (customDecoFrames && customDecoImg) {
+                if ((tHash & 7) < 2) {
+                  const frame = customDecoFrames[(tHash >>> 3) % customDecoFrames.length]!;
+                  if (frame.w <= 64 && frame.h <= 64) {
+                    const jitterX = 6 + ((tHash >>> 8) % 20);
+                    const effPivotY = frame.pivotY >= 0.75 ? frame.pivotY : 1.0;
+                    const dx = Math.round(sx + jitterX - frame.w * frame.pivotX);
+                    const dy = Math.round(sy + 2 - frame.h * effPivotY);
+                    ctx.drawImage(customDecoImg, frame.x, frame.y, frame.w, frame.h, dx, dy, frame.w, frame.h);
+                  }
+                }
+              } else if (builtInDecoSheet) {
+                if ((tHash % 10) < 3) {
+                  const decoIdx = (tHash >>> 4) & 7;
+                  const jitterX = 2 + ((tHash >>> 8) % 14);
+                  ctx.drawImage(builtInDecoSheet, decoIdx * 16, 0, 16, 16, sx + jitterX, sy - 15, 16, 16);
+                }
               }
             }
 
             // Secret wall subtle shimmer crack cue
             if (code === TileCode.SecretWall) {
-              const crack = atlas.specialTiles.get('secret_crack');
+              const crack = specialMap.get('secret_crack');
               if (crack && (hasSecretSight || ((tx + ty + anim2) & 1) === 0)) {
                 ctx.drawImage(crack, sx, sy);
               }
@@ -187,90 +590,108 @@ export class TileRenderer {
           continue;
         }
 
-        // Special tiles
+        // Special tiles (canonical slash keys for Custom Pack -> BiomeArtBaker Built-In fallback)
         switch (code) {
           case TileCode.OneWay: {
-            const spr = this.resolveSprite(customPack, atlas.specialTiles, 'tile_oneway', 'oneway');
-            if (spr) ctx.drawImage(spr, sx, sy);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/oneway', 'oneway', sx, sy, timeSec, 0, 'top');
             break;
           }
           case TileCode.Spike: {
-            const spr = this.resolveSprite(customPack, atlas.specialTiles, 'tile_spike', 'spike');
-            if (spr) ctx.drawImage(spr, sx, sy);
+            // Auto-orient spikes cleanly against adjacent floor/wall/ceiling solid tiles:
+            // [0]=up (floor), [1]=right (left wall), [2]=down (ceiling), [3]=left (right wall)
+            const downSolid = ty - 1 >= 0 && isSolidMaskTile(tiles[(ty - 1) * rw + tx]!);
+            const leftSolid = tx - 1 >= 0 && isSolidMaskTile(tiles[rowOff + tx - 1]!);
+            const upSolid = ty + 1 < rh && isSolidMaskTile(tiles[(ty + 1) * rw + tx]!);
+            const rightSolid = tx + 1 < rw && isSolidMaskTile(tiles[rowOff + tx + 1]!);
+            const spikeDir = downSolid ? 0 : leftSolid ? 1 : upSolid ? 2 : rightSolid ? 3 : 0;
+            this.drawOrientedSpike(ctx, customPack, specialMap, sx, sy, spikeDir);
             break;
           }
           case TileCode.Breakable: {
-            const spr = this.resolveSprite(customPack, atlas.specialTiles, 'tile_breakable', 'breakable');
-            if (spr) ctx.drawImage(spr, sx, sy);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/breakable', 'breakable', sx, sy, timeSec, 0, 'fill');
             break;
           }
           case TileCode.StoneOverhead: {
-            const spr = this.resolveSprite(
+            this.drawSpecialTile(
+              ctx,
               customPack,
-              atlas.specialTiles,
-              'tile_stone_overhead',
+              specialMap,
+              'tile/stone_overhead',
               'stone_overhead',
+              sx,
+              sy,
+              timeSec,
+              0,
+              'fill',
             );
-            if (spr) ctx.drawImage(spr, sx, sy);
             break;
           }
           case TileCode.Bounce: {
-            const spr = atlas.specialTiles.get('bounce');
-            if (spr) ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/bounce', 'bounce', sx, sy, timeSec, anim2, 'bottom');
             break;
           }
           case TileCode.Vine: {
-            const spr = this.resolveSprite(customPack, atlas.specialTiles, 'tile_vine', 'vine');
-            if (spr) ctx.drawImage(spr, sx, sy);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/vine', 'vine', sx, sy, timeSec, 0, 'fill');
             break;
           }
           case TileCode.Acid: {
-            const spr = atlas.specialTiles.get('acid');
-            if (spr) ctx.drawImage(spr, anim4 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/acid', 'acid', sx, sy, timeSec, anim4, 'fill');
             break;
           }
           case TileCode.Lava: {
-            const spr = atlas.specialTiles.get('lava');
-            if (spr) ctx.drawImage(spr, anim4 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/lava', 'lava', sx, sy, timeSec, anim4, 'fill');
             break;
           }
           case TileCode.Quicksand: {
-            const spr = atlas.specialTiles.get('quicksand');
-            if (spr) ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/quicksand', 'quicksand', sx, sy, timeSec, anim2, 'fill');
             break;
           }
           case TileCode.Crumble: {
-            const spr = atlas.specialTiles.get('crumble');
-            if (spr) {
-              const timer = state.crumbleTimers[idx];
-              const jitter = timer !== undefined && timer > 0 ? (((timeSec * 45) | 0) & 1 ? -1 : 1) : 0;
-              ctx.drawImage(spr, sx + jitter, sy);
-            }
+            const timer = state.crumbleTimers[idx];
+            const jitter = timer !== undefined && timer > 0 ? ((((timeSec * 45) | 0) & 1) ? -1 : 1) : 0;
+            this.drawSpecialTile(
+              ctx,
+              customPack,
+              specialMap,
+              'tile/crumble',
+              'crumble',
+              sx + jitter,
+              sy,
+              timeSec,
+              0,
+              'top',
+            );
             break;
           }
           case TileCode.Explosive: {
-            const spr = atlas.specialTiles.get('explosive');
-            if (spr) ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/explosive', 'explosive', sx, sy, timeSec, anim2, 'fill');
             break;
           }
           case TileCode.Antigrav: {
-            const spr = atlas.specialTiles.get('antigrav');
-            if (spr) ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/antigrav', 'antigrav', sx, sy, timeSec, anim2, 'center');
             break;
           }
           case TileCode.WindUp: {
-            const spr = atlas.specialTiles.get('wind_up');
-            if (spr) ctx.drawImage(spr, anim4 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/wind_up', 'wind_up', sx, sy, timeSec, anim4, 'fill');
             break;
           }
           case TileCode.WindLeft: {
-            const spr = atlas.specialTiles.get('wind_left');
-            if (spr) ctx.drawImage(spr, anim4 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/wind_left', 'wind_left', sx, sy, timeSec, anim4, 'fill');
             break;
           }
           case TileCode.WindRight: {
-            const spr = atlas.specialTiles.get('wind_right');
-            if (spr) ctx.drawImage(spr, anim4 * 32, 0, 32, 32, sx, sy, 32, 32);
+            this.drawSpecialTile(
+              ctx,
+              customPack,
+              specialMap,
+              'tile/wind_right',
+              'wind_right',
+              sx,
+              sy,
+              timeSec,
+              anim4,
+              'fill',
+            );
             break;
           }
           default:
@@ -283,18 +704,126 @@ export class TileRenderer {
     if (room.risingLava && state.lavaY > 0) {
       const lavaTopY = Math.round((camY - state.lavaY) * PPU + HALF_H);
       if (lavaTopY < VIEWPORT_H) {
-        const lavaSpr = atlas.specialTiles.get('lava');
-        if (lavaSpr) {
-          const startX = -Math.round(wrapOffset(camX * PPU, 32));
-          for (let x = startX; x < VIEWPORT_W + 32; x += 32) {
-            ctx.drawImage(lavaSpr, anim4 * 32, 0, 32, 32, x, lavaTopY, 32, 32);
-          }
+        const startX = -Math.round(wrapOffset(camX * PPU, 32));
+        for (let x = startX; x < VIEWPORT_W + 32; x += 32) {
+          this.drawSpecialTile(ctx, customPack, specialMap, 'tile/lava', 'lava', x, lavaTopY, timeSec, anim4, 'fill');
         }
         if (lavaTopY + 32 < VIEWPORT_H) {
           ctx.fillStyle = '#8f141c';
           ctx.fillRect(0, lavaTopY + 32, VIEWPORT_W, VIEWPORT_H - (lavaTopY + 32));
         }
       }
+    }
+  }
+
+  private drawOrientedSpike(
+    ctx: CanvasRenderingContext2D,
+    customPack: IAssetPackManager | null,
+    specialMap: ReadonlyMap<string, HTMLCanvasElement>,
+    sx: number,
+    sy: number,
+    dir: number,
+  ): void {
+    if (customPack && customPack.customPackEnabled) {
+      const img = customPack.getSprite('tile/spike');
+      if (isDrawable(img)) {
+        const entry = customPack.getEntry('tile/spike');
+        const frame = selectEntryFrame(entry, null, 0, dir);
+        if (frame) {
+          ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, sx, sy, 32, 32);
+          return;
+        }
+        const iw = getDrawableW(img);
+        const ih = getDrawableH(img);
+        if (iw >= 128 && ih === 32) {
+          ctx.drawImage(img, (dir & 3) * 32, 0, 32, 32, sx, sy, 32, 32);
+          return;
+        }
+        if (iw <= 64 && ih <= 64) {
+          ctx.drawImage(img, 0, 0, iw, ih, sx, sy, 32, 32);
+          return;
+        }
+      }
+    }
+
+    const spr = specialMap.get('spike');
+    if (!spr) return;
+    if (dir === 0) {
+      ctx.drawImage(spr, sx, sy);
+    } else {
+      ctx.save();
+      ctx.translate(sx + 16, sy + 16);
+      ctx.rotate(dir * (Math.PI * 0.5));
+      ctx.drawImage(spr, -16, -16);
+      ctx.restore();
+    }
+  }
+
+  private drawSpecialTile(
+    ctx: CanvasRenderingContext2D,
+    customPack: IAssetPackManager | null,
+    specialMap: ReadonlyMap<string, HTMLCanvasElement>,
+    customKey: string,
+    fallbackKey: string,
+    sx: number,
+    sy: number,
+    timeSec: number,
+    fallbackFrameIdx: number,
+    align: 'fill' | 'top' | 'bottom' | 'center',
+  ): void {
+    if (customPack && customPack.customPackEnabled) {
+      const img = customPack.getSprite(customKey);
+      if (isDrawable(img)) {
+        const entry = customPack.getEntry(customKey);
+        const frame = selectEntryFrame(entry, 'idle', timeSec);
+        if (frame) {
+          if (align === 'fill' || (frame.w === 32 && frame.h === 32)) {
+            ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, sx, sy, 32, 32);
+          } else if (align === 'top') {
+            const dh = Math.min(32, frame.h);
+            ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, sx, sy, 32, dh);
+          } else if (align === 'bottom') {
+            const dw = frame.w <= 48 ? frame.w : 32;
+            const dh = frame.h <= 48 ? frame.h : 32;
+            const dx = sx + ((32 - dw) >> 1);
+            const dy = sy + (32 - dh);
+            ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+          } else {
+            const dw = Math.min(32, frame.w);
+            const dh = Math.min(32, frame.h);
+            const dx = sx + ((32 - dw) >> 1);
+            const dy = sy + ((32 - dh) >> 1);
+            ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+          }
+          return;
+        }
+        const iw = getDrawableW(img);
+        const ih = getDrawableH(img);
+        if (ih === 32 && iw >= 32 && (iw & 31) === 0) {
+          const count = iw >> 5;
+          const col = count > 1 ? fallbackFrameIdx % count : 0;
+          ctx.drawImage(img, col * 32, 0, 32, 32, sx, sy, 32, 32);
+          return;
+        }
+        if (iw <= 48 && ih <= 48) {
+          const dw = Math.min(32, iw);
+          const dh = Math.min(32, ih);
+          const dx = sx + ((32 - dw) >> 1);
+          const dy = align === 'top' ? sy : align === 'bottom' ? sy + (32 - dh) : sy + ((32 - dh) >> 1);
+          ctx.drawImage(img, 0, 0, iw, ih, dx, dy, dw, dh);
+          return;
+        }
+      }
+    }
+
+    const spr = specialMap.get(fallbackKey);
+    if (!spr) return;
+    if (spr.width > 32) {
+      const count = Math.max(1, spr.width >> 5);
+      const col = fallbackFrameIdx % count;
+      ctx.drawImage(spr, col * 32, 0, 32, 32, sx, sy, 32, 32);
+    } else {
+      ctx.drawImage(spr, sx, sy);
     }
   }
 
@@ -312,10 +841,23 @@ export class TileRenderer {
     glyphs: DeviceGlyphMap,
   ): void {
     const anim2 = ((timeSec * 3.5) | 0) & 1;
+    const builtInArt = getBuiltInWorldArt();
+    const specialMap = builtInArt?.specialTiles ?? atlas.specialTiles;
+    const propsMap = builtInArt?.props ?? atlas.props;
+    const npcsMap = builtInArt?.npcs ?? atlas.npcs;
 
     // 1. Dynamic moving platforms & crushers
-    const platTile = atlas.specialTiles.get('moving_platform');
-    const crushTile = atlas.specialTiles.get('crusher');
+    const customPlat = customPack ? customPack.getSprite('tile/moving_platform') : null;
+    const customPlatEntry = customPack ? customPack.getEntry('tile/moving_platform') : null;
+    const customPlatFrame = isDrawable(customPlat) ? selectEntryFrame(customPlatEntry, 'idle', timeSec) : null;
+
+    const customCrush = customPack ? customPack.getSprite('tile/crusher') : null;
+    const customCrushEntry = customPack ? customPack.getEntry('tile/crusher') : null;
+    const customCrushFrame = isDrawable(customCrush) ? selectEntryFrame(customCrushEntry, 'idle', timeSec) : null;
+
+    const platTile = specialMap.get('moving_platform');
+    const crushTile = specialMap.get('crusher');
+
     for (let i = 0; i < state.platforms.length; i++) {
       const p = state.platforms[i]!;
       const wx = p.prevX + (p.x - p.prevX) * alpha;
@@ -325,20 +867,51 @@ export class TileRenderer {
       const pw = Math.max(16, Math.round(p.width * PPU));
       const ph = Math.max(12, Math.round(p.height * PPU));
 
-      if (p.kind === 'crusher' && crushTile) {
-        for (let ox = 0; ox < pw; ox += 32) {
-          const w = Math.min(32, pw - ox);
-          ctx.drawImage(crushTile, 0, 0, w, Math.min(32, ph), sx + ox, sy, w, ph);
+      if (p.kind === 'crusher') {
+        if (isDrawable(customCrush)) {
+          const fx = customCrushFrame ? customCrushFrame.x : 0;
+          const fy = customCrushFrame ? customCrushFrame.y : 0;
+          const fw = customCrushFrame ? customCrushFrame.w : getDrawableW(customCrush);
+          const fh = customCrushFrame ? customCrushFrame.h : getDrawableH(customCrush);
+          if (fw > 0 && fh > 0 && fw <= 64 && fh <= 64) {
+            for (let ox = 0; ox < pw; ox += 32) {
+              const w = Math.min(32, pw - ox);
+              ctx.drawImage(customCrush, fx, fy, Math.min(fw, w), fh, sx + ox, sy, w, ph);
+            }
+            continue;
+          }
         }
-      } else if (platTile) {
-        for (let ox = 0; ox < pw; ox += 32) {
-          const w = Math.min(32, pw - ox);
-          ctx.drawImage(platTile, 0, 0, w, 16, sx + ox, sy, w, Math.min(16, ph));
+        if (crushTile) {
+          for (let ox = 0; ox < pw; ox += 32) {
+            const w = Math.min(32, pw - ox);
+            ctx.drawImage(crushTile, 0, 0, w, Math.min(32, ph), sx + ox, sy, w, ph);
+          }
+        }
+      } else {
+        if (isDrawable(customPlat)) {
+          const fx = customPlatFrame ? customPlatFrame.x : 0;
+          const fy = customPlatFrame ? customPlatFrame.y : 0;
+          const fw = customPlatFrame ? customPlatFrame.w : getDrawableW(customPlat);
+          const fh = customPlatFrame ? customPlatFrame.h : getDrawableH(customPlat);
+          if (fw > 0 && fh > 0 && fw <= 96 && fh <= 48) {
+            const drawH = Math.min(ph, Math.max(12, fh));
+            for (let ox = 0; ox < pw; ox += 32) {
+              const w = Math.min(32, pw - ox);
+              ctx.drawImage(customPlat, fx, fy, Math.min(fw, w), fh, sx + ox, sy, w, drawH);
+            }
+            continue;
+          }
+        }
+        if (platTile) {
+          for (let ox = 0; ox < pw; ox += 32) {
+            const w = Math.min(32, pw - ox);
+            ctx.drawImage(platTile, 0, 0, w, 16, sx + ox, sy, w, Math.min(16, ph));
+          }
         }
       }
     }
 
-    // 2. Room exits subtle glowing doorway cues (especially locked gates or doors)
+    // 2. Room exits glowing doorway portals (doors & form/coin gates)
     for (let i = 0; i < room.exits.length; i++) {
       const ex = room.exits[i]!;
       if (ex.dir !== 'door' && !ex.requiredForm && !ex.requiredCoins) continue;
@@ -375,9 +948,9 @@ export class TileRenderer {
 
       const sx = Math.round((prop.x - camX) * PPU + HALF_W);
       const syBase = Math.round((camY - prop.y) * PPU + HALF_H);
-      if (sx < -64 || sx > VIEWPORT_W + 64 || syBase < -64 || syBase > VIEWPORT_H + 80) continue;
+      if (sx < -80 || sx > VIEWPORT_W + 80 || syBase < -80 || syBase > VIEWPORT_H + 96) continue;
 
-      this.renderProp(ctx, prop, state, sx, syBase, anim2, timeSec, atlas, customPack, font, glyphs);
+      this.renderProp(ctx, prop, state, sx, syBase, anim2, timeSec, propsMap, npcsMap, customPack, font, glyphs);
     }
 
     // 4. Desert sandstorm wind streaks overlay
@@ -393,6 +966,50 @@ export class TileRenderer {
     }
   }
 
+  /**
+   * Draws a foot-pivoted / clip-animated Custom Pack sprite at anchor (sx, syAnchor).
+   * - anchorMode='bottom': rests sprite base on syAnchor (respects foot pivots >= 0.75, snaps center-pivoted sprites to bottom).
+   * - anchorMode='center': centers sprite around (sx, syAnchor) (for hovering props like volt_node).
+   * Returns rendered pixel height (> 0) if drawn, or 0 if caller should use Built-In fallback.
+   * Guarded so giant uncropped multi-frame sheets without `frames` metadata are NEVER drawn raw.
+   */
+  private drawCustomFramedProp(
+    ctx: CanvasRenderingContext2D,
+    customPack: IAssetPackManager | null,
+    key: string,
+    clipName: string | null,
+    sx: number,
+    syAnchor: number,
+    timeSec: number,
+    maxUncroppedSize = 96,
+    anchorMode: 'bottom' | 'center' = 'bottom',
+  ): number {
+    if (!customPack || !customPack.customPackEnabled) return 0;
+    const img = customPack.getSprite(key);
+    if (!isDrawable(img)) return 0;
+
+    const entry = customPack.getEntry(key);
+    const frame = selectEntryFrame(entry, clipName, timeSec);
+    if (frame) {
+      const drawX = Math.round(sx - frame.w * frame.pivotX);
+      const effPivotY =
+        anchorMode === 'center' ? 0.5 : frame.pivotY >= 0.75 ? frame.pivotY : 1.0;
+      const drawY = Math.round(syAnchor - frame.h * effPivotY);
+      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, drawX, drawY, frame.w, frame.h);
+      return frame.h;
+    }
+
+    const iw = getDrawableW(img);
+    const ih = getDrawableH(img);
+    if (iw <= maxUncroppedSize && ih <= maxUncroppedSize) {
+      const drawY = anchorMode === 'center' ? Math.round(syAnchor - ih * 0.5) : syAnchor - ih;
+      ctx.drawImage(img, Math.round(sx - iw * 0.5), drawY);
+      return ih;
+    }
+
+    return 0;
+  }
+
   private renderProp(
     ctx: CanvasRenderingContext2D,
     prop: InteractivePropDef,
@@ -401,7 +1018,8 @@ export class TileRenderer {
     syBase: number,
     anim2: number,
     timeSec: number,
-    atlas: ProceduralPixelAtlas,
+    propsMap: ReadonlyMap<string, HTMLCanvasElement>,
+    npcsMap: ReadonlyMap<ShopId, HTMLCanvasElement>,
     customPack: IAssetPackManager | null,
     font: PixelFont,
     glyphs: DeviceGlyphMap,
@@ -409,25 +1027,37 @@ export class TileRenderer {
     switch (prop.kind) {
       case 'shop_npc': {
         const shopId = prop.shopId ?? 'codex';
-        const customNpc = customPack ? customPack.getSprite(`npc_${shopId}`) : null;
-        if (isDrawable(customNpc)) {
-          ctx.drawImage(customNpc, sx - (customNpc.width >> 1), syBase - customNpc.height);
-        } else {
-          const sheet = atlas.npcs.get(shopId);
+        let drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          NPC_KEYS[shopId],
+          'idle',
+          sx,
+          syBase,
+          timeSec,
+          96,
+        );
+        if (drawnH === 0) {
+          const sheet = npcsMap.get(shopId);
           if (sheet) {
             ctx.drawImage(sheet, anim2 * 36, 0, 36, 40, sx - 18, syBase - 40, 36, 40);
+            drawnH = 40;
+          } else {
+            drawnH = 40;
           }
         }
-        // Crisp NPC floating name + interact speech pill when near hero
+
+        // Crisp NPC floating name + interact speech pill cleanly positioned above sprite head
         const isActive = state.activeShopPrompt === shopId;
         const shortName = NPC_DISPLAY_NAMES[shopId];
+        const headClearY = syBase - Math.min(72, Math.max(36, drawnH));
         if (isActive) {
           const bob = Math.round(Math.sin(timeSec * 6) * 2);
           const keyBadge = glyphs.interact.startsWith('[') ? glyphs.interact : `[${glyphs.interact}]`;
           const pillText = `${keyBadge} ${prop.label ?? shortName}`;
           const tw = font.measure(pillText, 1);
           const px = Math.round(sx - tw * 0.5 - 5);
-          const py = syBase - 55 + bob;
+          const py = headClearY - 15 + bob;
           ctx.fillStyle = OUTLINE_DARK;
           ctx.fillRect(px - 1, py - 1, tw + 12, 13);
           ctx.fillStyle = UI_COLORS.frameGold;
@@ -436,16 +1066,29 @@ export class TileRenderer {
           ctx.fillRect(px + 1, py + 1, tw + 8, 9);
           font.draw(ctx, pillText, sx, py + 2, 'gold', 1, 'center', false);
         } else {
-          font.draw(ctx, shortName, sx, syBase - 49, 'cream', 1, 'center', true);
+          font.draw(ctx, shortName, sx, headClearY - 10, 'cream', 1, 'center', true);
         }
         break;
       }
 
       case 'volt_node': {
-        const spr = atlas.props.get('volt_node');
-        if (spr) {
-          const hover = Math.round(Math.sin(timeSec * 5 + prop.x) * 2);
-          ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx - 16, syBase - 32 + hover, 32, 32);
+        const hover = Math.round(Math.sin(timeSec * 5 + prop.x) * 2);
+        const drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/volt_node',
+          'idle',
+          sx,
+          syBase - 16 + hover,
+          timeSec,
+          64,
+          'center',
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get('volt_node');
+          if (spr) {
+            ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx - 16, syBase - 32 + hover, 32, 32);
+          }
         }
         // Subtle electric range ring cue when hero is in Volt form
         if (state.hero.form === 'krunk_electric') {
@@ -462,27 +1105,54 @@ export class TileRenderer {
 
       case 'form_totem': {
         const form = prop.formId ?? 'krunk_basic';
-        const spr = atlas.props.get(`totem_${form}`);
-        if (spr) {
-          ctx.drawImage(spr, sx - 18, syBase - 44);
+        let drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          FORM_TOTEM_KEYS[form],
+          'idle',
+          sx,
+          syBase,
+          timeSec,
+          96,
+        );
+        if (drawnH === 0 && FORM_TOTEM_KEYS[form] !== 'tile/form_totem') {
+          drawnH = this.drawCustomFramedProp(ctx, customPack, 'tile/form_totem', 'idle', sx, syBase, timeSec, 96);
+        }
+        if (drawnH === 0) {
+          const spr = propsMap.get(BUILTIN_TOTEM_KEYS[form]);
+          if (spr) {
+            ctx.drawImage(spr, sx - 18, syBase - 44);
+          }
+          drawnH = 44;
         }
         const pal = HERO_FORM_PALETTES[form];
-        // Floating glow motes around totem orb
         const pulse = Math.round(Math.sin(timeSec * 4 + prop.x) * 3);
         ctx.fillStyle = pal[4];
         ctx.fillRect(sx - 12, syBase - 34 + pulse, 2, 2);
         ctx.fillRect(sx + 10, syBase - 30 - pulse, 2, 2);
         if (prop.label) {
-          font.draw(ctx, prop.label, sx, syBase - 54, 'cyan', 1, 'center', true);
+          font.draw(ctx, prop.label, sx, syBase - Math.max(44, drawnH) - 10, 'cyan', 1, 'center', true);
         }
         break;
       }
 
       case 'chest': {
         const opened = state.progress.openedChests.includes(prop.id);
-        const spr = atlas.props.get(opened ? 'chest_open' : 'chest_closed');
-        if (spr) {
-          ctx.drawImage(spr, sx - 16, syBase - 28);
+        const drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/chest',
+          opened ? 'open' : 'closed',
+          sx,
+          syBase,
+          timeSec,
+          64,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get(opened ? 'chest_open' : 'chest_closed');
+          if (spr) {
+            ctx.drawImage(spr, sx - 16, syBase - 28);
+          }
         }
         if (!opened && anim2 === 0) {
           ctx.fillStyle = HIGHLIGHT_CREAM;
@@ -492,16 +1162,29 @@ export class TileRenderer {
       }
 
       case 'teleporter': {
-        const spr = atlas.props.get('teleporter');
         const unlocked = state.progress.unlockedTeleporters.includes(state.roomId);
-        if (spr) {
-          ctx.drawImage(spr, (unlocked ? anim2 : 0) * 40, 0, 40, 48, sx - 20, syBase - 48, 40, 48);
+        let drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/teleporter',
+          unlocked ? 'idle' : 'locked',
+          sx,
+          syBase,
+          timeSec,
+          96,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get('teleporter');
+          if (spr) {
+            ctx.drawImage(spr, (unlocked ? anim2 : 0) * 40, 0, 40, 48, sx - 20, syBase - 48, 40, 48);
+          }
+          drawnH = 48;
         }
         font.draw(
           ctx,
           unlocked ? 'WARP' : 'PORTAL',
           sx,
-          syBase - 57,
+          syBase - Math.max(44, drawnH) - 9,
           unlocked ? 'cyan' : 'dim',
           1,
           'center',
@@ -511,25 +1194,62 @@ export class TileRenderer {
       }
 
       case 'save_shrine': {
-        const spr = atlas.props.get('save_shrine');
-        if (spr) {
-          ctx.drawImage(spr, anim2 * 32, 0, 32, 40, sx - 16, syBase - 40, 32, 40);
+        const drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/save_shrine',
+          'idle',
+          sx,
+          syBase,
+          timeSec,
+          96,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get('save_shrine');
+          if (spr) {
+            ctx.drawImage(spr, anim2 * 32, 0, 32, 40, sx - 16, syBase - 40, 32, 40);
+          }
         }
         break;
       }
 
       case 'signpost': {
-        const spr = atlas.props.get('signpost');
-        if (spr) {
-          ctx.drawImage(spr, sx - 12, syBase - 28);
+        const drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/signpost',
+          'idle',
+          sx,
+          syBase,
+          timeSec,
+          64,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get('signpost');
+          if (spr) {
+            ctx.drawImage(spr, sx - 12, syBase - 28);
+          }
         }
         break;
       }
 
       case 'animal_house': {
-        const spr = atlas.props.get('animal_house');
-        if (spr) {
-          ctx.drawImage(spr, sx - 24, syBase - 44);
+        let drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/animal_house',
+          'idle',
+          sx,
+          syBase,
+          timeSec,
+          96,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get('animal_house');
+          if (spr) {
+            ctx.drawImage(spr, sx - 24, syBase - 44);
+          }
+          drawnH = 44;
         }
         if (prop.animalName) {
           const rescued = state.progress.rescuedAnimals.includes(prop.animalName);
@@ -537,7 +1257,7 @@ export class TileRenderer {
             ctx,
             prop.animalName,
             sx,
-            syBase - 53,
+            syBase - Math.max(44, drawnH) - 9,
             rescued ? 'green' : 'dim',
             1,
             'center',
@@ -548,10 +1268,22 @@ export class TileRenderer {
       }
 
       case 'target_switch': {
-        const spr = atlas.props.get('target_switch');
         const active = prop.targetId ? state.openedDoors.includes(prop.targetId) : false;
-        if (spr) {
-          ctx.drawImage(spr, (active ? 1 : 0) * 24, 0, 24, 24, sx - 12, syBase - 24, 24, 24);
+        const drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          'tile/target_switch',
+          active ? 'active' : 'idle',
+          sx,
+          syBase,
+          timeSec,
+          64,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get('target_switch');
+          if (spr) {
+            ctx.drawImage(spr, (active ? 1 : 0) * 24, 0, 24, 24, sx - 12, syBase - 24, 24, 24);
+          }
         }
         break;
       }
@@ -559,11 +1291,25 @@ export class TileRenderer {
       case 'target_door':
       case 'coin_door': {
         if (state.openedDoors.includes(prop.id)) break;
-        const spr = atlas.props.get(prop.kind === 'coin_door' ? 'coin_door' : 'door_locked');
-        if (spr) {
-          ctx.drawImage(spr, sx, syBase - 64);
+        const isCoin = prop.kind === 'coin_door';
+        const customKey = isCoin ? 'tile/coin_door' : 'tile/door_locked';
+        const drawnH = this.drawCustomFramedProp(
+          ctx,
+          customPack,
+          customKey,
+          'idle',
+          sx + 16,
+          syBase,
+          timeSec,
+          96,
+        );
+        if (drawnH === 0) {
+          const spr = propsMap.get(isCoin ? 'coin_door' : 'door_locked');
+          if (spr) {
+            ctx.drawImage(spr, sx, syBase - 64);
+          }
         }
-        if (prop.kind === 'coin_door' && prop.requiredCoins !== undefined) {
+        if (isCoin && prop.requiredCoins !== undefined) {
           font.draw(ctx, `${prop.requiredCoins}`, sx + 16, syBase - 36, 'gold', 1, 'center', true);
         }
         break;
@@ -572,18 +1318,5 @@ export class TileRenderer {
       default:
         break;
     }
-  }
-
-  private resolveSprite(
-    customPack: IAssetPackManager | null,
-    fallbackMap: ReadonlyMap<string, HTMLCanvasElement>,
-    customKey: string,
-    fallbackKey: string,
-  ): HTMLCanvasElement | HTMLImageElement | null {
-    if (customPack) {
-      const custom = customPack.getSprite(customKey);
-      if (isDrawable(custom)) return custom;
-    }
-    return fallbackMap.get(fallbackKey) ?? null;
   }
 }
