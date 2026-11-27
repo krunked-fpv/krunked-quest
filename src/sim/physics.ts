@@ -769,8 +769,14 @@ export function stepHeroPhysics(
         }
       }
     }
-    // ---- Wall-Slide Grace (50ms coyote window right after releasing wall) ----
-    else if (hero.wallSlideCoyoteTimer > 0 && hero.wallSlideDir !== 0 && !hero.grounded) {
+    // ---- Wall-Slide Grace (50ms coyote window — also fires on same-frame wall-release + Jump/Dash!) ----
+    if (
+      hero.action !== 'vine_slide' &&
+      hero.action !== 'wall_slide' &&
+      hero.wallSlideCoyoteTimer > 0 &&
+      hero.wallSlideDir !== 0 &&
+      !hero.grounded
+    ) {
       if (hero.preJumpTimer > 0) {
         startWallJump(state, hero.wallSlideDir, events);
         skipGravityThisTick = true;

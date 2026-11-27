@@ -559,6 +559,41 @@ describe('Hero Core Physics Feel', () => {
     expect(sBasic.hero.vx).toBeCloseTo(PHYSICS.WALL_JUMP_FORCE_X * 3, 1);
     expect(sBasic.hero.vy).toBeCloseTo(PHYSICS.JUMP_FORCE, 1);
 
+    // Same-frame wall-release + Jump MUST fire Wall Jump (vx = +15.0, vy = 10.0, action = 'jump'), NEVER Double Jump!
+    const sSameFrameWj = engine.createInitialState(catalog);
+    sSameFrameWj.hero.vy = -6;
+    stepN(engine, sSameFrameWj, catalog, 8, () => ({ moveX: -1 }));
+    expect(sSameFrameWj.hero.action).toBe('wall_slide');
+    const sfWjEv = stepN(engine, sSameFrameWj, catalog, 1, () => ({ moveX: 0, jumpPressed: true, jumpHeld: true }));
+    expect(sfWjEv.some((e) => e.type === 'wall_jump' && e.dir === 1)).toBe(true);
+    expect(sSameFrameWj.hero.action).toBe('jump');
+    expect(sSameFrameWj.hero.vx).toBeCloseTo(PHYSICS.WALL_JUMP_FORCE_X * 3, 1);
+    expect(sSameFrameWj.hero.vy).toBeCloseTo(PHYSICS.JUMP_FORCE, 1);
+    expect(sSameFrameWj.hero.jumpsRemaining).toBe(sSameFrameWj.hero.maxAirJumps);
+
+    // Same-frame wall-release (pressing away) + Dash MUST fire Wall Dash (vx = +17.0, vy = 8.0, tongueKind = 'wall_dash')!
+    const sSameFrameWd = engine.createInitialState(catalog);
+    sSameFrameWd.hero.vy = -6;
+    stepN(engine, sSameFrameWd, catalog, 8, () => ({ moveX: -1 }));
+    expect(sSameFrameWd.hero.action).toBe('wall_slide');
+    const sfWdEv = stepN(engine, sSameFrameWd, catalog, 1, () => ({ moveX: 1, dashPressed: true }));
+    expect(sfWdEv.some((e) => e.type === 'dash' && e.kind === 'wall')).toBe(true);
+    expect(sSameFrameWd.hero.action).toBe('wall_dash');
+    expect(sSameFrameWd.hero.tongueKind).toBe('wall_dash');
+    expect(sSameFrameWd.hero.vx).toBeCloseTo(PHYSICS.WALL_STOMP_FORCE_X, 1);
+    expect(sSameFrameWd.hero.vy).toBeCloseTo(PHYSICS.WALL_STOMP_FORCE_Y, 1);
+
+    // Delayed 2-tick coyote wall-jump after releasing wall direction still fires Wall Jump cleanly!
+    const sCoyoteWj = engine.createInitialState(catalog);
+    sCoyoteWj.hero.vy = -6;
+    stepN(engine, sCoyoteWj, catalog, 8, () => ({ moveX: -1 }));
+    expect(sCoyoteWj.hero.action).toBe('wall_slide');
+    stepN(engine, sCoyoteWj, catalog, 2, () => ({ moveX: 0 }));
+    expect(sCoyoteWj.hero.wallSlideCoyoteTimer).toBeGreaterThan(0);
+    const coyWjEv = stepN(engine, sCoyoteWj, catalog, 1, () => ({ jumpPressed: true, jumpHeld: true }));
+    expect(coyWjEv.some((e) => e.type === 'wall_jump' && e.dir === 1)).toBe(true);
+    expect(sCoyoteWj.hero.vx).toBeCloseTo(PHYSICS.WALL_JUMP_FORCE_X * 3, 1);
+
     // Wall slide form (lerps gently toward -2.0) + Wall dash (17.0, 8.0 with 0.5x decay rate!)
     const sForm = engine.createInitialState(catalog, {
       progress: { unlockedForms: ['krunk_basic', 'krunk_fire'] },
