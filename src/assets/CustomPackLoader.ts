@@ -215,6 +215,8 @@ function collectFilesFromFallbackInput(): Promise<Map<string, File> | null> {
   });
 }
 
+declare const __KRUNKED_DEV_MIDDLEWARE__: boolean | undefined;
+
 class CustomAssetPackManager implements IAssetPackManager {
   private _available = false;
   private _desiredEnabled = false;
@@ -253,6 +255,9 @@ class CustomAssetPackManager implements IAssetPackManager {
   }
 
   private async tryLoadFromLocalMiddleware(): Promise<boolean> {
+    if (typeof __KRUNKED_DEV_MIDDLEWARE__ !== 'undefined' && !__KRUNKED_DEV_MIDDLEWARE__) {
+      return false;
+    }
     if (typeof fetch === 'undefined') {
       return false;
     }

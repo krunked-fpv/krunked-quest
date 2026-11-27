@@ -38,8 +38,11 @@ function localCustomPackMiddleware(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   base: './',
+  define: {
+    __KRUNKED_DEV_MIDDLEWARE__: command === 'serve',
+  },
   plugins: [localCustomPackMiddleware()],
   server: {
     host: '127.0.0.1',
@@ -50,5 +53,15 @@ export default defineConfig({
     sourcemap: false,
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/src/data/world/regions/') || id.includes('\\src\\data\\world\\regions\\')) {
+            return 'world-regions';
+          }
+          return undefined;
+        },
+      },
+    },
   },
-});
+}));
