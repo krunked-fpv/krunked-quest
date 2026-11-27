@@ -1,5 +1,6 @@
 import { BIOME_PALETTES, HERO_FORM_PALETTES } from '../assets/palettes.js';
 import { HERO_FORMS, SIM_HZ } from '../contracts/index.js';
+import { makeIcon, makeLogoCrest, type IconName } from './icons.js';
 import type { OverlayActions, OverlayViewState } from './OverlayManager.js';
 
 export type ClearRank = 'S' | 'A' | 'B' | 'C';
@@ -47,22 +48,22 @@ export function computeCompletionPercent(view: OverlayViewState): number {
 
 export function computeTimeAttackRank(ticks: number): ClearRank {
   const sec = Math.max(0, ticks / SIM_HZ);
-  if (sec <= 300) return 'S'; // <= 05:00.00
-  if (sec <= 600) return 'A'; // <= 10:00.00
-  if (sec <= 1080) return 'B'; // <= 18:00.00
+  if (sec <= 300) return 'S';
+  if (sec <= 600) return 'A';
+  if (sec <= 1080) return 'B';
   return 'C';
 }
 
 function rankSubtitle(rank: ClearRank): string {
   switch (rank) {
     case 'S':
-      return 'SUPREME SPEEDRUNNER';
+      return 'Supreme Speedrunner';
     case 'A':
-      return 'ELITE CHAMPION';
+      return 'Elite Champion';
     case 'B':
-      return 'SEASONED EXPLORER';
+      return 'Seasoned Explorer';
     case 'C':
-      return 'QUEST CONQUEROR';
+      return 'Quest Conqueror';
   }
 }
 
@@ -71,11 +72,13 @@ function makeButton(
   label: string,
   className: string,
   onClick: () => void,
+  icon?: IconName,
 ): HTMLButtonElement {
   const b = doc.createElement('button');
   b.type = 'button';
   b.className = className;
-  b.textContent = label;
+  if (icon) b.appendChild(makeIcon(doc, icon, 15));
+  b.appendChild(doc.createTextNode(label));
   b.addEventListener('click', onClick);
   return b;
 }
@@ -109,29 +112,28 @@ export function buildVictoryPanel(
       : view.simState.tick;
   const rank = computeTimeAttackRank(splitTicks);
 
-  // Header & Rank Medallion
   const heroBanner = doc.createElement('div');
   heroBanner.className = 'kq-victory-banner';
 
   const titleGroup = doc.createElement('div');
   const h2 = doc.createElement('h2');
-  h2.className = 'kq-logo';
+  h2.className = 'kq-logo kq-logo-sm';
   h2.textContent = 'VICTORY!';
   const sub = doc.createElement('div');
   sub.className = 'kq-subtitle';
   sub.textContent =
     view.simState.mode === 'time_attack'
-      ? 'TIME ATTACK COMPLETE'
+      ? 'Time Attack Complete'
       : view.simState.mode === 'boss_rush'
-        ? 'GUARDIAN VANQUISHED'
-        : 'ECLIPSE SHATTERED — QUEST TRIUMPHANT';
+        ? 'Guardian Vanquished'
+        : 'Eclipse Shattered — Quest Triumphant';
   titleGroup.append(h2, sub);
 
   const rankBox = doc.createElement('div');
   rankBox.className = `kq-rank-medallion kq-rank-${rank.toLowerCase()}`;
   const rankLabel = doc.createElement('span');
   rankLabel.className = 'kq-rank-caption';
-  rankLabel.textContent = 'RANK';
+  rankLabel.textContent = 'CLEAR RANK';
   const rankLetter = doc.createElement('span');
   rankLetter.className = 'kq-rank-letter';
   rankLetter.textContent = rank;
@@ -143,7 +145,6 @@ export function buildVictoryPanel(
   heroBanner.append(titleGroup, rankBox);
   panel.appendChild(heroBanner);
 
-  // Completion Bar
   const compWrap = doc.createElement('div');
   compWrap.className = 'kq-completion-wrap';
   const compHead = doc.createElement('div');
@@ -163,13 +164,12 @@ export function buildVictoryPanel(
   compWrap.append(compHead, compBar);
   panel.appendChild(compWrap);
 
-  // Stats Grid
   const stats = doc.createElement('div');
   stats.className = 'kq-stat-grid kq-stat-grid-3';
 
   const bestSplitTxt =
     progress.bestTimeAttackTicks !== null
-      ? ` (BEST ${formatTicksAsTime(progress.bestTimeAttackTicks)})`
+      ? ` (Best ${formatTicksAsTime(progress.bestTimeAttackTicks)})`
       : '';
 
   stats.append(
@@ -178,11 +178,10 @@ export function buildVictoryPanel(
     makeStatItem(doc, 'Elemental Forms', `${progress.unlockedForms.length} / ${HERO_FORMS.length}`),
     makeStatItem(doc, 'Split Time', `${formatTicksAsTime(splitTicks)}${bestSplitTxt}`),
     makeStatItem(doc, 'Rooms Explored', `${progress.visitedRooms.length} / ${view.catalog.rooms.size}`),
-    makeStatItem(doc, 'Crystal Hoard', `◆ ${progress.crystals}`),
+    makeStatItem(doc, 'Crystal Hoard', String(progress.crystals)),
   );
   panel.appendChild(stats);
 
-  // Unlocked Forms Ribbon
   const formStrip = doc.createElement('div');
   formStrip.className = 'kq-victory-forms';
   for (const formId of HERO_FORMS) {
@@ -198,39 +197,65 @@ export function buildVictoryPanel(
   }
   panel.appendChild(formStrip);
 
-  // Actions: New Game+, Continue Exploring, Credits, Title
   const btnGrid = doc.createElement('div');
   btnGrid.className = 'kq-victory-actions';
 
   btnGrid.appendChild(
-    makeButton(doc, '★ NEW GAME+ (KEEP FORMS)', 'kq-btn kq-btn-primary', () => {
-      // Carry forward unlocked forms, upgrades, relics, and crystals into a fresh lap from Tutorial Lair
-      view.simState.victoryTriggered = false;
-      view.simState.gameOverTriggered = false;
-      view.simState.hero.hp = view.simState.hero.maxHp;
-      view.simState.timeAttackTicks = 0;
-      view.simState.mode = 'story';
-      actions.onForceSave();
-      actions.onWarpRoom(view.catalog.startRoomId);
-    }),
+    makeButton(
+      doc,
+      'New Game+ (Keep Forms)',
+      'kq-btn kq-btn-primary',
+      () => {
+        actions.onUiSfx?.('confirm');
+        view.simState.victoryTriggered = false;
+        view.simState.gameOverTriggered = false;
+        view.simState.hero.hp = view.simState.hero.maxHp;
+        view.simState.timeAttackTicks = 0;
+        view.simState.mode = 'story';
+        actions.onForceSave();
+        actions.onWarpRoom(view.catalog.startRoomId);
+      },
+      'sparkle',
+    ),
   );
 
   btnGrid.appendChild(
-    makeButton(doc, 'CONTINUE EXPLORING (HUB)', 'kq-btn kq-btn-accent', () => {
-      actions.onReturnToHub();
-    }),
+    makeButton(
+      doc,
+      'Continue in Subrosa Haven',
+      'kq-btn kq-btn-accent',
+      () => {
+        actions.onUiSfx?.('confirm');
+        actions.onReturnToHub();
+      },
+      'home',
+    ),
   );
 
   btnGrid.appendChild(
-    makeButton(doc, 'CREDITS', 'kq-btn', () => {
-      actions.onOpenCredits();
-    }),
+    makeButton(
+      doc,
+      'Credits',
+      'kq-btn',
+      () => {
+        actions.onUiSfx?.('confirm');
+        actions.onOpenCredits();
+      },
+      'trophy',
+    ),
   );
 
   btnGrid.appendChild(
-    makeButton(doc, 'TITLE SCREEN', 'kq-btn', () => {
-      actions.onReturnToTitle();
-    }),
+    makeButton(
+      doc,
+      'Title Screen',
+      'kq-btn',
+      () => {
+        actions.onUiSfx?.('back');
+        actions.onReturnToTitle();
+      },
+      'close',
+    ),
   );
 
   panel.appendChild(btnGrid);
@@ -243,7 +268,7 @@ export function buildGameOverPanel(
   actions: OverlayActions,
 ): HTMLElement {
   const panel = doc.createElement('div');
-  panel.className = 'kq-panel kq-panel-title kq-panel-gameover';
+  panel.className = 'kq-panel kq-panel-gameover';
 
   const isGhostShip = view.simState.mode === 'ghost_ship';
   const room = view.catalog.rooms.get(view.simState.roomId);
@@ -261,7 +286,7 @@ export function buildGameOverPanel(
     ? 'The cursed tide claimed the galleon — rally your combo and sail again!'
     : hasMagicCoin
       ? 'Magic Coin protected your crystal pouch from defeat penalty.'
-      : 'Rise again, champion — master your stomp and form chains!';
+      : 'Rise again, champion — master your stomp and elemental chains!';
   panel.appendChild(sub);
 
   const stats = doc.createElement('div');
@@ -275,10 +300,22 @@ export function buildGameOverPanel(
     );
   } else {
     stats.append(
-      makeStatItem(doc, 'Fallen Location', room ? `${room.name} (${biomePal?.label ?? room.biome})` : view.simState.roomId),
-      makeStatItem(doc, 'Crystals', `◆ ${view.simState.progress.crystals}`),
-      makeStatItem(doc, 'Golden Coins', `${view.simState.progress.collectedCoinIds.length} / ${view.catalog.totalCoins}`),
-      makeStatItem(doc, 'Bosses Cleared', `${view.simState.progress.defeatedBosses.length} / ${view.catalog.bosses.size}`),
+      makeStatItem(
+        doc,
+        'Fallen Location',
+        room ? `${room.name} (${biomePal?.label ?? room.biome})` : view.simState.roomId,
+      ),
+      makeStatItem(doc, 'Crystals', String(view.simState.progress.crystals)),
+      makeStatItem(
+        doc,
+        'Golden Coins',
+        `${view.simState.progress.collectedCoinIds.length} / ${view.catalog.totalCoins}`,
+      ),
+      makeStatItem(
+        doc,
+        'Bosses Cleared',
+        `${view.simState.progress.defeatedBosses.length} / ${view.catalog.bosses.size}`,
+      ),
     );
   }
   panel.appendChild(stats);
@@ -288,16 +325,38 @@ export function buildGameOverPanel(
   list.appendChild(
     makeButton(
       doc,
-      isGhostShip ? '⚓ SAIL AGAIN' : 'RETRY ROOM',
+      isGhostShip ? 'Sail Again' : 'Retry Room',
       'kq-btn kq-btn-primary',
-      () => actions.onRetryGameOver(),
+      () => {
+        actions.onUiSfx?.('confirm');
+        actions.onRetryGameOver();
+      },
+      isGhostShip ? 'anchor' : 'play',
     ),
   );
   list.appendChild(
-    makeButton(doc, 'RETURN TO HUB', 'kq-btn kq-btn-accent', () => actions.onReturnToHub()),
+    makeButton(
+      doc,
+      'Return to Hub',
+      'kq-btn kq-btn-accent',
+      () => {
+        actions.onUiSfx?.('confirm');
+        actions.onReturnToHub();
+      },
+      'home',
+    ),
   );
   list.appendChild(
-    makeButton(doc, 'TITLE SCREEN', 'kq-btn kq-btn-danger', () => actions.onReturnToTitle()),
+    makeButton(
+      doc,
+      'Title Screen',
+      'kq-btn kq-btn-danger',
+      () => {
+        actions.onUiSfx?.('back');
+        actions.onReturnToTitle();
+      },
+      'close',
+    ),
   );
   panel.appendChild(list);
 
@@ -316,14 +375,14 @@ export function buildCreditsPanel(
   logoWrap.className = 'kq-logo-wrap';
 
   const h2 = doc.createElement('h2');
-  h2.className = 'kq-logo';
+  h2.className = 'kq-logo kq-logo-sm';
   h2.textContent = 'KRUNKED QUEST';
 
   const sub = doc.createElement('div');
   sub.className = 'kq-subtitle';
-  sub.textContent = 'OFFICIAL CREDITS & ADVENTURE ARCHIVE';
+  sub.textContent = 'Official Credits & Adventure Archive';
 
-  logoWrap.append(h2, sub);
+  logoWrap.append(makeLogoCrest(doc), h2, sub);
   panel.appendChild(logoWrap);
 
   const scroll = doc.createElement('div');
@@ -331,7 +390,7 @@ export function buildCreditsPanel(
 
   const creditBlocks: ReadonlyArray<{ heading: string; entries: readonly string[] }> = [
     {
-      heading: 'CORE ENGINE & DETERMINISTIC SIMULATION',
+      heading: 'Core Engine & Deterministic Simulation',
       entries: [
         '60Hz Fixed-Timestep Platformer Physics — Krunked Quest Core Engineering',
         'Swept AABB Collision, Combo-Heal & 6-Form Combat — Simulation Architects',
@@ -339,7 +398,7 @@ export function buildCreditsPanel(
       ],
     },
     {
-      heading: 'WORLD DESIGN, PIXEL CRAFT & AUDIO',
+      heading: 'World Design, Pixel Craft & Audio',
       entries: [
         '64-Room Interconnected Metroidvania across 11 Biomes — Worldsmith Guild',
         '16-Bit Neo-Retro Pixel Atlas, Biome Atmosphere & Boss Art — Pixelcraft Studio',
@@ -347,7 +406,7 @@ export function buildCreditsPanel(
       ],
     },
     {
-      heading: 'MULTI-DEVICE CONTROLS & META INTERFACE',
+      heading: 'Multi-Device Controls & Meta Interface',
       entries: [
         'Keyboard, Xbox / PlayStation / Switch / Tesla Gamepad & Auto-Touch — Input Team',
         'Interactive World Map, Subrosa Haven Shops & Playtest QA Tools — Meta UI Team',
@@ -361,6 +420,7 @@ export function buildCreditsPanel(
     sec.className = 'kq-section kq-credits-block';
     const title = doc.createElement('div');
     title.className = 'kq-section-title';
+    title.style.justifyContent = 'center';
     title.textContent = block.heading;
     sec.appendChild(title);
     for (const line of block.entries) {
@@ -372,16 +432,27 @@ export function buildCreditsPanel(
     scroll.appendChild(sec);
   }
 
-  // Final Adventure Record
   const compPct = computeCompletionPercent(view);
   const record = doc.createElement('div');
   record.className = 'kq-stat-grid kq-stat-grid-3';
   record.append(
     makeStatItem(doc, 'Completion', `${compPct}%`),
-    makeStatItem(doc, 'Golden Coins', `${view.simState.progress.collectedCoinIds.length} / ${view.catalog.totalCoins}`),
-    makeStatItem(doc, 'Bosses Cleared', `${view.simState.progress.defeatedBosses.length} / ${view.catalog.bosses.size}`),
-    makeStatItem(doc, 'Forms Unlocked', `${view.simState.progress.unlockedForms.length} / ${HERO_FORMS.length}`),
-    makeStatItem(doc, 'Ghost Ship Best', `WAVE ${view.simState.progress.ghostShipBestWave}`),
+    makeStatItem(
+      doc,
+      'Golden Coins',
+      `${view.simState.progress.collectedCoinIds.length} / ${view.catalog.totalCoins}`,
+    ),
+    makeStatItem(
+      doc,
+      'Bosses Cleared',
+      `${view.simState.progress.defeatedBosses.length} / ${view.catalog.bosses.size}`,
+    ),
+    makeStatItem(
+      doc,
+      'Forms Unlocked',
+      `${view.simState.progress.unlockedForms.length} / ${HERO_FORMS.length}`,
+    ),
+    makeStatItem(doc, 'Ghost Ship Best', `Wave ${view.simState.progress.ghostShipBestWave}`),
     makeStatItem(
       doc,
       'Best Time Attack',
@@ -396,8 +467,26 @@ export function buildCreditsPanel(
   const actionsRow = doc.createElement('div');
   actionsRow.className = 'kq-credits-actions';
   actionsRow.append(
-    makeButton(doc, 'RETURN TO TITLE', 'kq-btn kq-btn-primary', () => actions.onReturnToTitle()),
-    makeButton(doc, 'BACK TO SUBROSA HAVEN', 'kq-btn', () => actions.onReturnToHub()),
+    makeButton(
+      doc,
+      'Return to Title',
+      'kq-btn kq-btn-primary',
+      () => {
+        actions.onUiSfx?.('back');
+        actions.onReturnToTitle();
+      },
+      'play',
+    ),
+    makeButton(
+      doc,
+      'Back to Subrosa Haven',
+      'kq-btn',
+      () => {
+        actions.onUiSfx?.('confirm');
+        actions.onReturnToHub();
+      },
+      'home',
+    ),
   );
   panel.appendChild(actionsRow);
 

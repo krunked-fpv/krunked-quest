@@ -448,6 +448,8 @@ function getProjectileCustomKey(kind: ProjectileRuntime['kind']): string {
 // EntityRenderer
 // ============================================================================
 
+const MAX_HERO_AFTERIMAGES = 6;
+
 export class EntityRenderer {
   private readonly slice: SpriteSliceOut = {
     sx: 0,
@@ -459,6 +461,40 @@ export class EntityRenderer {
     hasManifestRect: false,
     matchedClip: false,
   };
+
+  // Zero-allocation circular motion-afterimage buffer for dashes, blinks & air stomps!
+  private readonly ghostX = new Float64Array(MAX_HERO_AFTERIMAGES);
+  private readonly ghostY = new Float64Array(MAX_HERO_AFTERIMAGES);
+  private readonly ghostFacing = new Int8Array(MAX_HERO_AFTERIMAGES);
+  private readonly ghostTime = new Float64Array(MAX_HERO_AFTERIMAGES);
+  private readonly ghostColor: string[] = new Array(MAX_HERO_AFTERIMAGES).fill('#d42aff');
+  private ghostCursor = 0;
+  private lastGhostSample = -1;
+
+  public resetAfterimages(): void {
+    this.ghostTime.fill(-99);
+    this.ghostCursor = 0;
+    this.lastGhostSample = -1;
+  }
+
+  private drawSoftGlow(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    r: number,
+    color: string,
+    alpha: number,
+  ): void {
+    const prev = ctx.globalAlpha;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha * 0.45;
+    ctx.fillRect(cx - r, cy - r + 2, r * 2, r * 2 - 4);
+    ctx.fillRect(cx - r + 2, cy - r, r * 2 - 4, r * 2);
+    ctx.globalAlpha = alpha;
+    const hr = r >> 1;
+    ctx.fillRect(cx - hr, cy - hr, hr * 2, hr * 2);
+    ctx.globalAlpha = prev;
+  }
 
   public renderAll(
     ctx: CanvasRenderingContext2D,
@@ -510,6 +546,9 @@ export class EntityRenderer {
       const sy = Math.round((camY - c.y) * PPU + HALF_H) + bob;
       if (sx < -20 || sx > VIEWPORT_W + 20 || sy < -20 || sy > VIEWPORT_H + 20) continue;
 
+      // Subtle glowing halo behind floating crystals
+      this.drawSoftGlow(ctx, sx, sy, 8, UI_COLORS.crystalMid, 0.16);
+
       if (hasCustomCrystal) {
         const dw = Math.min(20, Math.max(12, csw));
         const dh = Math.min(22, Math.max(12, csh));
@@ -538,6 +577,9 @@ export class EntityRenderer {
       const sx = Math.round((coin.x - camX) * PPU + HALF_W);
       const sy = Math.round((camY - coin.y) * PPU + HALF_H) + bob;
       if (sx < -24 || sx > VIEWPORT_W + 24 || sy < -24 || sy > VIEWPORT_H + 24) continue;
+
+      // Warm golden shimmer aura behind uncollected coins
+      this.drawSoftGlow(ctx, sx, sy, 11, UI_COLORS.coinMid, 0.19 + 0.05 * Math.sin(timeSec * 5 + i));
 
       if (hasCustomCoin) {
         const dw = Math.min(26, Math.max(18, ksw <= 28 ? ksw : 22));
@@ -668,6 +710,17 @@ export class EntityRenderer {
         ctx.fillStyle = UI_COLORS.frameGold;
         ctx.fillRect(footX - 6 + stOff, topY, 2, 2);
         ctx.fillRect(footX + 4 - stOff, topY - 1, 2, 2);
+      }
+
+      // Crisp ranged-attack telegraph flash above enemy right before firing!
+      if (e.shootTimer > 0 && e.shootTimer < 0.34) {
+        const topY = footY - Math.round(e.height * PPU) - 10;
+        const pulse = (((timeSec * 24) | 0) & 1) === 0;
+        ctx.fillStyle = OUTLINE_DARK;
+        ctx.fillRect(footX - 2, topY - 1, 4, 9);
+        ctx.fillStyle = pulse ? '#ff546e' : UI_COLORS.frameGold;
+        ctx.fillRect(footX - 1, topY, 2, 5);
+        ctx.fillRect(footX - 1, topY + 6, 2, 2);
       }
 
       if (e.maxHp > 1 && e.hp < e.maxHp) {
@@ -835,8 +888,48 @@ export class EntityRenderer {
       }
     }
 
-    // Subtle elemental aura motes behind non-basic forms
+    // Record & render crisp tinted hero motion afterimages during dashes, blinks, and air stomps!
+    const act = hero.action;
+    const isHighSpeed =
+      act === 'fire_dash' ||
+      act === 'ground_dash' ||
+      act === 'wall_dash' ||
+      act === 'volt_dive' ||
+      act === 'volt_blink' ||
+      act === 'shadow_blink' ||
+      act === 'air_stomp';
+    if (isHighSpeed && (this.lastGhostSample < 0 || timeSec - this.lastGhostSample >= 0.032)) {
+      const idx = this.ghostCursor;
+      this.ghostCursor = (this.ghostCursor + 1) % MAX_HERO_AFTERIMAGES;
+      this.ghostX[idx] = wx + hero.width * 0.5;
+      this.ghostY[idx] = wy + hero.height * 0.5;
+      this.ghostFacing[idx] = hero.facing;
+      this.ghostTime[idx] = timeSec;
+      this.ghostColor[idx] = pal[0];
+      this.lastGhostSample = timeSec;
+    }
+
+    const prevGAlpha = ctx.globalAlpha;
+    for (let gi = 0; gi < MAX_HERO_AFTERIMAGES; gi++) {
+      const age = timeSec - this.ghostTime[gi]!;
+      if (age < 0.01 || age > 0.21) continue;
+      const frac = 1 - age / 0.21;
+      const gx = Math.round((this.ghostX[gi]! - camX) * PPU + HALF_W);
+      const gy = Math.round((camY - this.ghostY[gi]!) * PPU + HALF_H);
+      ctx.globalAlpha = frac * 0.34;
+      ctx.fillStyle = this.ghostColor[gi]!;
+      const gw = Math.max(8, Math.round(16 * (0.65 + frac * 0.35)));
+      const gh = Math.max(10, Math.round(20 * (0.65 + frac * 0.35)));
+      ctx.fillRect(gx - (gw >> 1), gy - (gh >> 1), gw, gh);
+      ctx.globalAlpha = frac * 0.45;
+      ctx.fillStyle = HIGHLIGHT_CREAM;
+      ctx.fillRect(gx - (gw >> 2), gy - (gh >> 2), Math.max(4, gw >> 1), Math.max(4, gh >> 1));
+    }
+    ctx.globalAlpha = prevGAlpha;
+
+    // Subtle elemental aura glow + motes behind non-basic forms
     if (hero.form !== 'krunk_basic') {
+      this.drawSoftGlow(ctx, footX, centerY, 15, pal[0], 0.14);
       const t = timeSec * 4;
       ctx.fillStyle = pal[4];
       for (let m = 0; m < 3; m++) {
@@ -1482,6 +1575,19 @@ export class EntityRenderer {
       const sx = Math.round((wx - camX) * PPU + HALF_W);
       const sy = Math.round((camY - wy) * PPU + HALF_H);
       if (sx < -24 || sx > VIEWPORT_W + 24 || sy < -24 || sy > VIEWPORT_H + 24) continue;
+
+      // Subtle readable glow halo behind active projectiles
+      const glowColor =
+        p.kind === 'fireball' || p.kind === 'fire_wave'
+          ? '#ff7a2a'
+          : p.kind === 'plasma'
+            ? '#52f0ff'
+            : p.kind === 'dark_orb' || p.kind === 'shockwave'
+              ? '#cc55ff'
+              : p.kind === 'spit' || p.kind === 'thorn'
+                ? '#7ef263'
+                : '#ffd145';
+      this.drawSoftGlow(ctx, sx, sy, p.kind === 'fire_wave' ? 12 : 9, glowColor, 0.22);
 
       const customKey = getProjectileCustomKey(p.kind);
       const customProj = customPack ? customPack.getSprite(customKey) : null;

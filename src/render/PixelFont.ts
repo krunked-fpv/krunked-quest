@@ -1,10 +1,11 @@
 /**
- * Krunked Quest — Crisp Outlined 5x7 Bitmap Pixel Font Renderer
- * Pre-bakes integer-crisp 1px-outlined glyphs onto offscreen canvases at boot.
+ * Krunked Quest — Sculpted Proportional 16-Bit Pixel Font Renderer
+ * Pre-bakes integer-crisp 1px-outlined glyphs with 3-tone vertical bevel shading
+ * and proportional kerning onto offscreen canvases at boot.
  * Zero blurry browser canvas text, zero per-frame allocations!
  */
 
-import { OUTLINE_DARK, hexToAbgr } from '../assets/palettes.js';
+import { OUTLINE_DARK, hexToAbgr, mixHex } from '../assets/palettes.js';
 
 export type PixelFontColor =
   | 'white'
@@ -19,118 +20,177 @@ export type PixelFontColor =
   | 'cream';
 
 const FONT_COLOR_HEX: Readonly<Record<PixelFontColor, string>> = {
-  white: '#ffffff',
-  gold: '#ffd84d',
-  cyan: '#66f2ff',
-  magenta: '#ff66cc',
-  green: '#7aff66',
+  white: '#f8f5ff',
+  gold: '#ffd644',
+  cyan: '#5cefff',
+  magenta: '#ff5ec4',
+  green: '#6ef278',
   red: '#ff5268',
-  orange: '#ff9e38',
-  yellow: '#f2ff4d',
-  dim: '#a38db8',
-  cream: '#fff4d6',
+  orange: '#ff9b38',
+  yellow: '#f4ff54',
+  dim: '#a995c4',
+  cream: '#fff2d1',
 };
 
 const FONT_TOP_SHADE: Readonly<Record<PixelFontColor, string>> = {
   white: '#ffffff',
-  gold: '#fff5a6',
-  cyan: '#c4ffff',
-  magenta: '#ffb8eb',
-  green: '#cfffb8',
-  red: '#ffadba',
-  orange: '#ffd499',
-  yellow: '#ffffb8',
-  dim: '#cbb8de',
+  gold: '#fff6b0',
+  cyan: '#d4ffff',
+  magenta: '#ffc4ee',
+  green: '#d4ffc4',
+  red: '#ffb8c2',
+  orange: '#ffd8a3',
+  yellow: '#ffffc2',
+  dim: '#d4c3e8',
   cream: '#ffffff',
 };
 
-// 5x7 bitmap glyphs (7 rows of 5-bit patterns, MSB on left)
-const GLYPH_DATA: Readonly<Record<string, readonly number[]>> = {
-  ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-  '!': [0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04],
-  '"': [0x0a, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x00],
-  '#': [0x0a, 0x1f, 0x0a, 0x0a, 0x1f, 0x0a, 0x00],
-  '$': [0x04, 0x0f, 0x14, 0x0e, 0x05, 0x1e, 0x04],
-  '%': [0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03],
-  '&': [0x0c, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0d],
-  "'": [0x04, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00],
-  '(': [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
-  ')': [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
-  '*': [0x00, 0x0a, 0x04, 0x1f, 0x04, 0x0a, 0x00],
-  '+': [0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00],
-  ',': [0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08],
-  '-': [0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00],
-  '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c],
-  '/': [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
-  '0': [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
-  '1': [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
-  '2': [0x0e, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1f],
-  '3': [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
-  '4': [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
-  '5': [0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e],
-  '6': [0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e],
-  '7': [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-  '8': [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
-  '9': [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c],
-  ':': [0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00],
-  ';': [0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x08],
-  '<': [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
-  '=': [0x00, 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00],
-  '>': [0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08],
-  '?': [0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
-  '@': [0x0e, 0x11, 0x17, 0x15, 0x17, 0x10, 0x0e],
-  A: [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-  B: [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
-  C: [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
-  D: [0x1c, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1c],
-  E: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
-  F: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
-  G: [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
-  H: [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-  I: [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
-  J: [0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0c],
-  K: [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-  L: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
-  M: [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
-  N: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-  O: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  P: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
-  Q: [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
-  R: [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
-  S: [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
-  T: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-  U: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  V: [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
-  W: [0x11, 0x11, 0x11, 0x15, 0x15, 0x1b, 0x11],
-  X: [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
-  Y: [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
-  Z: [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
-  '[': [0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e],
-  '\\': [0x10, 0x10, 0x08, 0x04, 0x02, 0x01, 0x01],
-  ']': [0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e],
-  '^': [0x04, 0x0a, 0x11, 0x00, 0x00, 0x00, 0x00],
-  _: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f],
-  '|': [0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-  '~': [0x00, 0x08, 0x15, 0x02, 0x00, 0x00, 0x00],
-  // PlayStation / Switch / Gamepad Unicode fallbacks
-  '✕': [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
-  '□': [0x1f, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1f],
-  '○': [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  '△': [0x04, 0x0a, 0x0a, 0x11, 0x11, 0x11, 0x1f],
+const FONT_BOT_SHADE: Readonly<Record<PixelFontColor, string>> = {
+  white: '#cfc2e6',
+  gold: '#e09a1e',
+  cyan: '#24b8e6',
+  magenta: '#cc2e98',
+  green: '#38bd57',
+  red: '#cc2944',
+  orange: '#d46217',
+  yellow: '#cbd61e',
+  dim: '#7a6596',
+  cream: '#e6cfa3',
 };
 
-// Ordered charset for atlas lookup
-const CHARSET = Object.keys(GLYPH_DATA);
-const CHAR_INDEX = new Map<string, number>();
-for (let i = 0; i < CHARSET.length; i++) {
-  CHAR_INDEX.set(CHARSET[i]!, i);
+interface GlyphDef {
+  /** Visible pixel width of this glyph (1..6) */
+  readonly w: number;
+  /** 7 rows of left-aligned bitmasks (MSB = bit 5 for 6-bit rows) */
+  readonly rows: readonly number[];
 }
 
-// Each baked cell is 7x10 (5px glyph + 1px outline left/right, 7px glyph + 1px top + 2px bottom drop-shadow)
+// Helper: turn compact 7-line ASCII strings ('#' = lit) into crisp proportional GlyphDefs
+function g(lines: readonly string[]): GlyphDef {
+  let w = 0;
+  for (let r = 0; r < lines.length; r++) {
+    if (lines[r]!.length > w) w = lines[r]!.length;
+  }
+  const rows: number[] = [];
+  for (let r = 0; r < 7; r++) {
+    const line = lines[r] ?? '';
+    let bits = 0;
+    for (let x = 0; x < w; x++) {
+      if (line.charAt(x) === '#') {
+        bits |= 1 << (5 - x);
+      }
+    }
+    rows.push(bits);
+  }
+  return { w: Math.max(1, w), rows };
+}
+
+// Sculpted proportional 16-bit arcade pixel glyphs (clean SNES/GBA curves & tight widths)
+const GLYPH_DATA: Readonly<Record<string, GlyphDef>> = {
+  ' ': { w: 3, rows: [0, 0, 0, 0, 0, 0, 0] },
+  '!': g(['##', '##', '##', '##', '##', '..', '##']),
+  '"': g(['#.#', '#.#', '#.#', '...', '...', '...', '...']),
+  '#': g(['.#.#.', '#####', '.#.#.', '.#.#.', '#####', '.#.#.', '.....']),
+  '$': g(['..#..', '.####', '#.#..', '.###.', '..#.#', '####.', '..#..']),
+  '%': g(['##..#', '##.#.', '..#..', '.#...', '#..##', '...##', '.....']),
+  '&': g(['.###.', '#...#', '.##..', '#.##.', '#..#.', '#..#.', '.##.#']),
+  "'": g(['#', '#', '.', '.', '.', '.', '.']),
+  '(': g(['.#', '#.', '#.', '#.', '#.', '#.', '.#']),
+  ')': g(['#.', '.#', '.#', '.#', '.#', '.#', '#.']),
+  '*': g(['.....', '.#.#.', '..#..', '#####', '..#..', '.#.#.', '.....']),
+  '+': g(['.....', '..#..', '..#..', '#####', '..#..', '..#..', '.....']),
+  ',': g(['..', '..', '..', '..', '.#', '.#', '#.']),
+  '-': g(['....', '....', '....', '####', '....', '....', '....']),
+  '.': g(['..', '..', '..', '..', '..', '##', '##']),
+  '/': g(['...#', '...#', '..#.', '.#..', '.#..', '#...', '#...']),
+  '0': g(['.###.', '##.##', '##.##', '##.##', '##.##', '##.##', '.###.']),
+  '1': g(['.##.', '###.', '.##.', '.##.', '.##.', '.##.', '####']),
+  '2': g(['.###.', '##.##', '...##', '..##.', '.##..', '##...', '#####']),
+  '3': g(['####.', '...##', '...##', '.###.', '...##', '...##', '####.']),
+  '4': g(['..##.', '.###.', '##.##', '#####', '...##', '...##', '...##']),
+  '5': g(['#####', '##...', '####.', '...##', '...##', '##.##', '.###.']),
+  '6': g(['.###.', '##...', '####.', '##.##', '##.##', '##.##', '.###.']),
+  '7': g(['#####', '...##', '..##.', '..##.', '.##..', '.##..', '.##..']),
+  '8': g(['.###.', '##.##', '##.##', '.###.', '##.##', '##.##', '.###.']),
+  '9': g(['.###.', '##.##', '##.##', '.####', '...##', '..##.', '.##..']),
+  ':': g(['..', '##', '##', '..', '##', '##', '..']),
+  ';': g(['..', '.#', '.#', '..', '.#', '.#', '#.']),
+  '<': g(['...#', '..#.', '.#..', '#...', '.#..', '..#.', '...#']),
+  '=': g(['....', '....', '####', '....', '####', '....', '....']),
+  '>': g(['#...', '.#..', '..#.', '...#', '..#.', '.#..', '#...']),
+  '?': g(['.###.', '##.##', '...##', '..##.', '..##.', '.....', '..##.']),
+  '@': g(['.###.', '#...#', '#.###', '#.#.#', '#.###', '#....', '.###.']),
+  A: g(['.###.', '##.##', '##.##', '#####', '##.##', '##.##', '##.##']),
+  B: g(['####.', '##.##', '##.##', '####.', '##.##', '##.##', '####.']),
+  C: g(['.####', '##...', '##...', '##...', '##...', '##...', '.####']),
+  D: g(['####.', '##.##', '##.##', '##.##', '##.##', '##.##', '####.']),
+  E: g(['#####', '##...', '##...', '####.', '##...', '##...', '#####']),
+  F: g(['#####', '##...', '##...', '####.', '##...', '##...', '##...']),
+  G: g(['.####', '##...', '##...', '##.##', '##.##', '##.##', '.###.']),
+  H: g(['##.##', '##.##', '##.##', '#####', '##.##', '##.##', '##.##']),
+  I: g(['###', '.#.', '.#.', '.#.', '.#.', '.#.', '###']),
+  J: g(['..###', '...##', '...##', '...##', '##.##', '##.##', '.###.']),
+  K: g(['##.##', '##.##', '####.', '###..', '####.', '##.##', '##.##']),
+  L: g(['##..', '##..', '##..', '##..', '##..', '##..', '####']),
+  M: g(['##..##', '######', '######', '##..##', '##..##', '##..##', '##..##']),
+  N: g(['##..#', '###.#', '#####', '#####', '#.###', '#..##', '#..##']),
+  O: g(['.###.', '##.##', '##.##', '##.##', '##.##', '##.##', '.###.']),
+  P: g(['####.', '##.##', '##.##', '####.', '##...', '##...', '##...']),
+  Q: g(['.###.', '##.##', '##.##', '##.##', '##.##', '##.#.', '.##.#']),
+  R: g(['####.', '##.##', '##.##', '####.', '##.#.', '##.##', '##.##']),
+  S: g(['.####', '##...', '##...', '.###.', '...##', '...##', '####.']),
+  T: g(['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..']),
+  U: g(['##.##', '##.##', '##.##', '##.##', '##.##', '##.##', '.###.']),
+  V: g(['##.##', '##.##', '##.##', '##.##', '##.##', '.###.', '..#..']),
+  W: g(['##..##', '##..##', '##..##', '##..##', '######', '######', '##..##']),
+  X: g(['##.##', '##.##', '.###.', '..#..', '.###.', '##.##', '##.##']),
+  Y: g(['##.##', '##.##', '##.##', '.###.', '..#..', '..#..', '..#..']),
+  Z: g(['#####', '...##', '..##.', '.##..', '##...', '##...', '#####']),
+  '[': g(['###', '##.', '##.', '##.', '##.', '##.', '###']),
+  '\\': g(['#...', '#...', '.#..', '..#.', '..#.', '...#', '...#']),
+  ']': g(['###', '.##', '.##', '.##', '.##', '.##', '###']),
+  '^': g(['..#..', '.#.#.', '#...#', '.....', '.....', '.....', '.....']),
+  _: g(['.....', '.....', '.....', '.....', '.....', '.....', '#####']),
+  '|': g(['#', '#', '#', '#', '#', '#', '#']),
+  '~': g(['.....', '.##.#', '#..#.', '.....', '.....', '.....', '.....']),
+  '·': g(['..', '..', '##', '##', '..', '..', '..']),
+  // Gamepad & UI symbols
+  '✕': g(['##.##', '.###.', '..#..', '.###.', '##.##', '.....', '.....']),
+  '□': g(['#####', '#...#', '#...#', '#...#', '#...#', '#...#', '#####']),
+  '○': g(['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.']),
+  '△': g(['..#..', '.###.', '.#.#.', '##.##', '##.##', '#####', '.....']),
+  '★': g(['..#..', '..#..', '#####', '.###.', '.###.', '#...#', '.....']),
+  '◆': g(['..#..', '.###.', '#####', '.###.', '..#..', '.....', '.....']),
+  '♥': g(['.#.#.', '#####', '#####', '.###.', '..#..', '.....', '.....']),
+  '⚡': g(['..##.', '.##..', '####.', '..##.', '.##..', '#....', '.....']),
+  '↑': g(['..#..', '.###.', '#####', '..#..', '..#..', '..#..', '.....']),
+  '↓': g(['..#..', '..#..', '..#..', '#####', '.###.', '..#..', '.....']),
+  '←': g(['..#..', '.##..', '#####', '.##..', '..#..', '.....', '.....']),
+  '→': g(['..#..', '..##.', '#####', '..##.', '..#..', '.....', '.....']),
+};
+
+const CHARSET = Object.keys(GLYPH_DATA);
+const CHAR_INDEX = new Map<string, number>();
+const CHAR_WIDTHS = new Uint8Array(CHARSET.length);
+for (let i = 0; i < CHARSET.length; i++) {
+  const ch = CHARSET[i]!;
+  CHAR_INDEX.set(ch, i);
+  CHAR_WIDTHS[i] = GLYPH_DATA[ch]!.w;
+}
+
+// Each baked cell is 8x10 (up to 6px glyph + 1px outline left/right, 7px glyph + 1px top + 2px bottom drop-shadow)
 export const GLYPH_ADVANCE = 6;
 export const GLYPH_HEIGHT = 7;
-const CELL_W = 7;
+const CELL_W = 8;
 const CELL_H = 10;
+
+function normalizeChar(rawCh: string): string {
+  if (rawCh === '—' || rawCh === '–') return '-';
+  if (rawCh === '’' || rawCh === '‘') return "'";
+  if (rawCh === '“' || rawCh === '”') return '"';
+  if (rawCh === '•') return '·';
+  return rawCh >= 'a' && rawCh <= 'z' ? rawCh.toUpperCase() : rawCh;
+}
 
 export class PixelFont {
   private readonly outlinedSheets = new Map<PixelFontColor, HTMLCanvasElement>();
@@ -163,21 +223,24 @@ export class PixelFont {
     const data = new Uint32Array(img.data.buffer);
     const fillMain = hexToAbgr(FONT_COLOR_HEX[color]);
     const fillTop = hexToAbgr(FONT_TOP_SHADE[color]);
+    const fillBot = hexToAbgr(FONT_BOT_SHADE[color] ?? mixHex(FONT_COLOR_HEX[color], OUTLINE_DARK, 0.25));
     const outlineCol = hexToAbgr(OUTLINE_DARK);
     const w = canvas.width;
 
     for (let ci = 0; ci < CHARSET.length; ci++) {
       const ch = CHARSET[ci]!;
-      const rows = GLYPH_DATA[ch]!;
+      const def = GLYPH_DATA[ch]!;
+      const rows = def.rows;
+      const gw = def.w;
       const ox = ci * CELL_W + 1;
       const oy = 1;
 
       if (outlined) {
-        // 1px dark-plum outline + 1px extra drop shadow beneath
+        // 1px crisp dark-plum outline + 1px extra bottom drop shadow
         for (let ry = 0; ry < 7; ry++) {
           const bits = rows[ry]!;
-          for (let rx = 0; rx < 5; rx++) {
-            if ((bits & (16 >> rx)) === 0) continue;
+          for (let rx = 0; rx < gw; rx++) {
+            if ((bits & (32 >> rx)) === 0) continue;
             const px = ox + rx;
             const py = oy + ry;
             data[(py - 1) * w + px] = outlineCol;
@@ -195,12 +258,12 @@ export class PixelFont {
         }
       }
 
-      // Main crisp pixels with subtle 16-bit top-2-row highlight
+      // 3-tone 16-bit bevel fill (top highlight -> rich core -> subtle bottom shade)
       for (let ry = 0; ry < 7; ry++) {
         const bits = rows[ry]!;
-        const col = ry < 2 ? fillTop : fillMain;
-        for (let rx = 0; rx < 5; rx++) {
-          if ((bits & (16 >> rx)) === 0) continue;
+        const col = ry < 2 ? fillTop : ry >= 5 ? fillBot : fillMain;
+        for (let rx = 0; rx < gw; rx++) {
+          if ((bits & (32 >> rx)) === 0) continue;
           const px = ox + rx;
           const py = oy + ry;
           data[py * w + px] = col;
@@ -214,7 +277,14 @@ export class PixelFont {
 
   public measure(text: string, scale = 1): number {
     if (text.length === 0) return 0;
-    return (text.length * GLYPH_ADVANCE - 1) * scale;
+    let total = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = normalizeChar(text.charAt(i));
+      const idx = CHAR_INDEX.get(ch);
+      const gw = idx !== undefined ? CHAR_WIDTHS[idx]! : 4;
+      total += gw + 1;
+    }
+    return Math.max(0, total - 1) * scale;
   }
 
   public draw(
@@ -239,32 +309,27 @@ export class PixelFont {
       drawX = Math.round(x - totalW);
     }
     const drawY = Math.round(y);
-    const dstW = CELL_W * scale;
     const dstH = CELL_H * scale;
-    const adv = GLYPH_ADVANCE * scale;
 
     for (let i = 0; i < text.length; i++) {
-      let rawCh = text.charAt(i);
-      if (rawCh === '—' || rawCh === '–') rawCh = '-';
-      else if (rawCh === '’' || rawCh === '‘') rawCh = "'";
-      else if (rawCh === '“' || rawCh === '”') rawCh = '"';
-      else if (rawCh === '·' || rawCh === '•') rawCh = '.';
-      const upper = rawCh >= 'a' && rawCh <= 'z' ? rawCh.toUpperCase() : rawCh;
-      const idx = CHAR_INDEX.get(upper);
-      if (idx !== undefined && upper !== ' ') {
+      const ch = normalizeChar(text.charAt(i));
+      const idx = CHAR_INDEX.get(ch);
+      const gw = idx !== undefined ? CHAR_WIDTHS[idx]! : 4;
+      if (idx !== undefined && ch !== ' ') {
+        const srcW = gw + 2;
         ctx.drawImage(
           sheet,
           idx * CELL_W,
           0,
-          CELL_W,
+          srcW,
           CELL_H,
           drawX - scale,
           drawY - scale,
-          dstW,
+          srcW * scale,
           dstH,
         );
       }
-      drawX += adv;
+      drawX += (gw + 1) * scale;
     }
   }
 }

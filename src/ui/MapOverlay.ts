@@ -1,5 +1,6 @@
 import { BIOME_PALETTES } from '../assets/palettes.js';
 import type { BiomeId, RoomDef, RoomExitDef } from '../contracts/index.js';
+import { makeIcon } from './icons.js';
 import type { OverlayActions, OverlayViewState } from './OverlayManager.js';
 
 type ExitDir = RoomExitDef['dir'];
@@ -18,12 +19,25 @@ function getBiomeBgColor(biome: BiomeId): string {
 
 function getBiomeAccentColor(biome: BiomeId): string {
   const pal = BIOME_PALETTES[biome];
-  return pal ? pal.colors[0] : '#ffd644';
+  return pal ? pal.colors[0] : '#ffd84d';
 }
 
 function getBiomeLabel(biome: BiomeId): string {
   const pal = BIOME_PALETTES[biome];
   return pal ? pal.label : biome;
+}
+
+/** Strips redundant leading "Biome — " prefix inside compact map cells so names stay legible! */
+function getCompactCellName(room: RoomDef): string {
+  const dashIdx = room.name.indexOf('—');
+  if (dashIdx >= 0 && dashIdx < room.name.length - 2) {
+    return room.name.slice(dashIdx + 1).trim();
+  }
+  const hyphenIdx = room.name.indexOf(' - ');
+  if (hyphenIdx >= 0 && hyphenIdx < room.name.length - 4) {
+    return room.name.slice(hyphenIdx + 3).trim();
+  }
+  return room.name;
 }
 
 function exitDirArrow(dir: ExitDir): string {
@@ -63,7 +77,6 @@ export function buildMapPanel(
 
   const allRooms = Array.from(view.catalog.rooms.values());
 
-  // Compute per-region coin & exploration totals
   const regionStats = new Map<
     BiomeId,
     { roomsTotal: number; roomsVisited: number; coinsTotal: number; coinsCollected: number }
@@ -82,7 +95,6 @@ export function buildMapPanel(
     }
   }
 
-  // Compute map grid bounds
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -108,27 +120,26 @@ export function buildMapPanel(
   const headLeft = doc.createElement('div');
   const title = doc.createElement('h2');
   title.className = 'kq-panel-heading';
-  title.textContent = 'WORLD MAP';
+  title.append(makeIcon(doc, 'map', 19), doc.createTextNode('WORLD MAP'));
   const sub = doc.createElement('div');
   sub.className = 'kq-panel-subheading';
-  sub.textContent = `EXPLORED ${visitedSet.size}/${allRooms.length} ROOMS · COINS ${progress.collectedCoinIds.length}/${view.catalog.totalCoins} · ${regionStats.size} BIOMES`;
+  sub.textContent = `Explored ${visitedSet.size}/${allRooms.length} Rooms · Coins ${progress.collectedCoinIds.length}/${view.catalog.totalCoins} · ${regionStats.size} Biomes`;
   headLeft.append(title, sub);
 
   const headRight = doc.createElement('div');
   headRight.className = 'kq-map-head-actions';
 
-  // Quick Cartography Upgrades status badges
   const upgStrip = doc.createElement('div');
   upgStrip.className = 'kq-map-upgrades';
   const upgBadges: ReadonlyArray<{ label: string; active: boolean; title: string }> = [
-    { label: 'EXITS', active: showExits, title: 'Wayfinder Chart (Orla): highlights unvisited exits' },
-    { label: 'SECRETS', active: showSecrets, title: 'Hidden Sanctum Lens (Orla): reveals secret rooms' },
-    { label: 'ARENAS', active: showArenas, title: "Challenger's Compass (Orla): badges arenas & bosses" },
+    { label: 'Exits', active: showExits, title: 'Wayfinder Chart (Orla): highlights unvisited exits' },
+    { label: 'Secrets', active: showSecrets, title: 'Hidden Sanctum Lens (Orla): reveals secret rooms' },
+    { label: 'Arenas', active: showArenas, title: "Challenger's Compass (Orla): badges arenas & bosses" },
   ];
   for (const u of upgBadges) {
     const b = doc.createElement('span');
     b.className = u.active ? 'kq-badge kq-badge-active' : 'kq-badge kq-badge-dim';
-    b.textContent = u.active ? `✓ ${u.label}` : `○ ${u.label}`;
+    b.append(makeIcon(doc, u.active ? 'check' : 'lock', 11), doc.createTextNode(u.label));
     b.title = u.title;
     upgStrip.appendChild(b);
   }
@@ -137,24 +148,26 @@ export function buildMapPanel(
   const zoomBtn = doc.createElement('button');
   zoomBtn.type = 'button';
   zoomBtn.className = 'kq-btn kq-btn-sm';
-  zoomBtn.textContent = 'ZOOM 100%';
+  zoomBtn.textContent = '100%';
 
   const centerBtn = doc.createElement('button');
   centerBtn.type = 'button';
   centerBtn.className = 'kq-btn kq-btn-sm';
-  centerBtn.textContent = '◎ CENTER';
+  centerBtn.append(makeIcon(doc, 'compass', 13), doc.createTextNode('Center'));
 
   const closeBtn = doc.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'kq-btn kq-btn-sm kq-btn-primary';
-  closeBtn.textContent = 'CLOSE';
-  closeBtn.addEventListener('click', () => actions.onCloseMap());
+  closeBtn.append(makeIcon(doc, 'close', 13), doc.createTextNode('Close'));
+  closeBtn.addEventListener('click', () => {
+    actions.onUiSfx?.('back');
+    actions.onCloseMap();
+  });
 
   headRight.append(upgStrip, zoomBtn, centerBtn, closeBtn);
   header.append(headLeft, headRight);
   panel.appendChild(header);
 
-  // Determine which rooms are adjacent to visited rooms (for ViewMapExits hints)
   const unvisitedAdjacentIds = new Set<string>();
   for (const r of allRooms) {
     if (!visitedSet.has(r.id)) continue;
@@ -165,24 +178,21 @@ export function buildMapPanel(
     }
   }
 
-  // Interactive pan/scroll viewport
   const gridWrap = doc.createElement('div');
   gridWrap.className = 'kq-map-grid-wrap';
   gridWrap.setAttribute('aria-label', 'Interactive World Map Grid');
 
   const grid = doc.createElement('div');
   grid.className = 'kq-map-grid';
-  const cellW = cols > 10 ? 78 : 92;
+  const cellW = cols > 10 ? 110 : 122;
   grid.style.gridTemplateColumns = `repeat(${cols}, ${cellW}px)`;
 
-  // Inspector state
   const currentRoom = view.catalog.rooms.get(currentRoomId) ?? allRooms[0] ?? null;
   let inspectedRoom: RoomDef | null = currentRoom;
   let selectedCellEl: HTMLButtonElement | null = null;
   let currentCellEl: HTMLButtonElement | null = null;
   const cellByRoomId = new Map<string, HTMLButtonElement>();
 
-  // Inspector footer elements (created upfront so cell focus/click updates them live)
   const inspector = doc.createElement('div');
   inspector.className = 'kq-map-inspector';
 
@@ -225,13 +235,13 @@ export function buildMapPanel(
     if (isCurrent) {
       const youTag = doc.createElement('span');
       youTag.className = 'kq-badge kq-badge-gold';
-      youTag.textContent = '● CURRENT';
+      youTag.append(makeIcon(doc, 'compass', 11), doc.createTextNode('Current'));
       titleLine.appendChild(youTag);
     }
     if (room.isSecret && (visited || showSecrets)) {
       const secTag = doc.createElement('span');
       secTag.className = 'kq-badge kq-badge-secret';
-      secTag.textContent = '★ SECRET';
+      secTag.append(makeIcon(doc, 'sparkle', 11), doc.createTextNode('Secret'));
       titleLine.appendChild(secTag);
     }
     if (room.mode === 'boss' && (visited || showArenas)) {
@@ -239,35 +249,30 @@ export function buildMapPanel(
       const defeated = room.bossId ? defeatedBossSet.has(room.bossId) : false;
       const bTag = doc.createElement('span');
       bTag.className = defeated ? 'kq-badge kq-badge-active' : 'kq-badge kq-badge-danger';
-      bTag.textContent = defeated
-        ? `✓ ${bossDef?.name ?? 'BOSS'} CLEARED`
-        : `☠ ${bossDef?.name ?? 'BOSS SANCTUM'}`;
+      bTag.append(
+        makeIcon(doc, defeated ? 'check' : 'skull', 11),
+        doc.createTextNode(defeated ? `${bossDef?.name ?? 'Boss'} Cleared` : bossDef?.name ?? 'Boss Sanctum'),
+      );
       titleLine.appendChild(bTag);
     } else if (room.mode === 'arena' && (visited || showArenas)) {
       const aTag = doc.createElement('span');
       aTag.className = 'kq-badge kq-badge-ready';
-      aTag.textContent = '⚔ COMBAT ARENA';
+      aTag.append(makeIcon(doc, 'swords', 11), doc.createTextNode('Combat Arena'));
       titleLine.appendChild(aTag);
     }
 
     const metaLine = doc.createElement('div');
     metaLine.className = 'kq-map-inspector-meta';
 
-    const roomCoinTxt =
-      room.coins.length > 0
-        ? `ROOM COINS: ${roomCoinsCollected}/${room.coins.length}`
-        : 'ROOM COINS: 0/0';
+    const roomCoinTxt = `Room Coins: ${roomCoinsCollected}/${room.coins.length}`;
     const regionCoinTxt = rStats
-      ? `REGION COINS: ${rStats.coinsCollected}/${rStats.coinsTotal} (${rStats.roomsVisited}/${rStats.roomsTotal} ROOMS)`
+      ? `Region: ${rStats.coinsCollected}/${rStats.coinsTotal} Coins (${rStats.roomsVisited}/${rStats.roomsTotal} Rooms)`
       : '';
-    const totalCoinTxt = `WORLD TOTAL: ${progress.collectedCoinIds.length}/${view.catalog.totalCoins}`;
-
-    const parts = [roomCoinTxt, regionCoinTxt, totalCoinTxt].filter(Boolean);
-    metaLine.textContent = parts.join('  ·  ');
+    const totalCoinTxt = `World: ${progress.collectedCoinIds.length}/${view.catalog.totalCoins}`;
+    metaLine.textContent = [roomCoinTxt, regionCoinTxt, totalCoinTxt].filter(Boolean).join('  ·  ');
 
     leftCol.append(titleLine, metaLine);
 
-    // Exits preview if visited or ViewMapExits active
     if (revealed && room.exits.length > 0) {
       const exitsLine = doc.createElement('div');
       exitsLine.className = 'kq-map-inspector-exits';
@@ -281,34 +286,33 @@ export function buildMapPanel(
             : '???';
         return `${exitDirArrow(ex.dir)} ${label}`;
       });
-      exitsLine.textContent = `EXITS: ${exitSummaries.join('  |  ')}`;
+      exitsLine.textContent = `Exits: ${exitSummaries.join('  |  ')}`;
       leftCol.appendChild(exitsLine);
     }
 
     inspector.appendChild(leftCol);
 
-    // Right action column in inspector (direct Fast Travel for inspected teleporter room)
     const rightCol = doc.createElement('div');
     rightCol.className = 'kq-map-inspector-actions';
     if (canTp && !isCurrent) {
       const warpBtn = doc.createElement('button');
       warpBtn.type = 'button';
       warpBtn.className = 'kq-btn kq-btn-sm kq-btn-accent';
-      warpBtn.textContent = `⚡ WARP TO ${room.name.toUpperCase()}`;
+      warpBtn.append(makeIcon(doc, 'bolt', 13), doc.createTextNode(`Warp to ${getCompactCellName(room)}`));
       warpBtn.addEventListener('click', () => {
+        actions.onUiSfx?.('confirm');
         actions.onFastTravel(room.id);
       });
       rightCol.appendChild(warpBtn);
     } else if (room.hasTeleporter && !canTp) {
       const lockedTp = doc.createElement('span');
       lockedTp.className = 'kq-badge';
-      lockedTp.textContent = '⚡ TELEPORTER UNVISITED';
+      lockedTp.append(makeIcon(doc, 'bolt', 11), doc.createTextNode('Waystone Unvisited'));
       rightCol.appendChild(lockedTp);
     }
     inspector.appendChild(rightCol);
   };
 
-  // Build map cells (Y-up: maxY at top row, minY at bottom row)
   for (let gy = maxY; gy >= minY; gy--) {
     for (let gx = minX; gx <= maxX; gx++) {
       const room = roomByCoord.get(`${gx},${gy}`);
@@ -346,17 +350,15 @@ export function buildMapPanel(
         cell.style.setProperty('--map-biome-accent', biomeAccent);
       } else if (exitHinted) {
         cell.style.backgroundColor = '#1c1233';
-        cell.style.setProperty('--map-biome-accent', '#ffd644');
+        cell.style.setProperty('--map-biome-accent', '#ffd84d');
       } else {
         cell.style.backgroundColor = '#120a20';
       }
 
-      // Fogged unrevealed rooms are non-interactive; revealed or exit-hinted rooms can be inspected
       cell.disabled = !revealed && !exitHinted;
       cell.setAttribute('data-room-id', room.id);
       cell.setAttribute('data-biome', room.biome);
 
-      // Connecting path indicators along cell edges
       if (revealed) {
         const edgeDirs = new Set<ExitDir>();
         const unvisitedEdgeDirs = new Set<ExitDir>();
@@ -366,17 +368,13 @@ export function buildMapPanel(
             unvisitedEdgeDirs.add(ex.dir);
           }
         }
-        // Also detect visual coordinate adjacency if exit targets adjacent grid cell
         for (const dir of ['left', 'right', 'up', 'down'] as const) {
           const hasExit = edgeDirs.has(dir);
           const [dx, dy] = DIRECTION_OFFSETS[dir];
           const neighbor = roomByCoord.get(`${gx + dx},${gy + dy}`);
           const neighborConnected =
             hasExit ||
-            Boolean(
-              neighbor &&
-                neighbor.exits.some((e) => e.targetRoomId === room.id),
-            );
+            Boolean(neighbor && neighbor.exits.some((e) => e.targetRoomId === room.id));
           if (!neighborConnected) continue;
 
           const conn = doc.createElement('span');
@@ -388,7 +386,6 @@ export function buildMapPanel(
         }
       }
 
-      // Pulsing beacon on current room
       if (isCurrent) {
         const pulse = doc.createElement('span');
         pulse.className = 'kq-map-pulse-dot';
@@ -396,22 +393,20 @@ export function buildMapPanel(
         cell.appendChild(pulse);
       }
 
-      // Top row: concise room label
       const nameLine = doc.createElement('div');
       nameLine.className = 'kq-map-cell-name';
-      nameLine.textContent = revealed ? room.name : exitHinted ? '? EXIT' : '···';
+      nameLine.textContent = revealed ? getCompactCellName(room) : exitHinted ? '? Passage' : '···';
 
-      // Bottom row: icons (Current, Teleporter, Boss/Arena, Secret, Coins completion, Unvisited Exits)
       const icons = doc.createElement('div');
       icons.className = 'kq-map-icons';
       const tags: string[] = [];
-      if (isCurrent) tags.push('●YOU');
-      if (canFastTravel) tags.push('⚡');
+      if (isCurrent) tags.push('YOU');
+      if (canFastTravel) tags.push('WARP');
       if ((visited || showArenas) && room.mode === 'boss') {
         const bossDefeated = room.bossId ? defeatedBossSet.has(room.bossId) : false;
-        tags.push(bossDefeated ? '✓☠' : '☠');
+        tags.push(bossDefeated ? '✓BOSS' : 'BOSS');
       } else if ((visited || showArenas) && room.mode === 'arena') {
-        tags.push('⚔');
+        tags.push('ARENA');
       }
       if ((visited || showSecrets) && room.isSecret) {
         tags.push('★');
@@ -431,7 +426,7 @@ export function buildMapPanel(
           tags.push(unvisitedDirs.join(''));
         }
       }
-      icons.textContent = tags.join(' ');
+      icons.textContent = tags.join(' · ');
 
       cell.append(nameLine, icons);
 
@@ -454,6 +449,7 @@ export function buildMapPanel(
         cell.addEventListener('click', () => {
           selectThisCell();
           if (canFastTravel && !isCurrent) {
+            actions.onUiSfx?.('confirm');
             actions.onFastTravel(room.id);
           }
         });
@@ -473,13 +469,13 @@ export function buildMapPanel(
   gridWrap.appendChild(grid);
   panel.appendChild(gridWrap);
 
-  // Zoom & Center behavior
   const applyZoom = () => {
     grid.style.transform = zoomLevel === 1 ? '' : `scale(${zoomLevel})`;
     grid.style.transformOrigin = 'top left';
-    zoomBtn.textContent = `ZOOM ${Math.round(zoomLevel * 100)}%`;
+    zoomBtn.textContent = `${Math.round(zoomLevel * 100)}%`;
   };
   zoomBtn.addEventListener('click', () => {
+    actions.onUiSfx?.('tab');
     zoomLevel = zoomLevel === 1 ? 0.8 : zoomLevel === 0.8 ? 1.2 : 1;
     applyZoom();
   });
@@ -490,9 +486,11 @@ export function buildMapPanel(
       targetEl.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
     }
   };
-  centerBtn.addEventListener('click', () => centerOnCell(currentCellEl));
+  centerBtn.addEventListener('click', () => {
+    actions.onUiSfx?.('tab');
+    centerOnCell(currentCellEl);
+  });
 
-  // Mouse drag-to-pan on the map viewport
   let isDragging = false;
   let dragStartX = 0;
   let dragStartY = 0;
@@ -525,11 +523,9 @@ export function buildMapPanel(
   gridWrap.addEventListener('pointerup', stopDrag);
   gridWrap.addEventListener('pointerleave', stopDrag);
 
-  // Render initial inspector state for current room
   updateInspector(inspectedRoom);
   panel.appendChild(inspector);
 
-  // Fast Travel Dock: Quick Jump to Subrosa Haven Hub + all unlocked Teleporters
   const tpSec = doc.createElement('section');
   tpSec.className = 'kq-section kq-map-tp-section';
 
@@ -538,7 +534,10 @@ export function buildMapPanel(
   const tpTitle = doc.createElement('div');
   tpTitle.className = 'kq-section-title';
   const unlockedTps = progress.unlockedTeleporters.filter((id) => view.catalog.rooms.has(id));
-  tpTitle.textContent = `FAST TRAVEL WAYSTONES (${unlockedTps.length} UNLOCKED)`;
+  tpTitle.append(
+    makeIcon(doc, 'bolt', 13),
+    doc.createTextNode(`Fast Travel Waystones (${unlockedTps.length} Unlocked)`),
+  );
 
   const hubBtn = doc.createElement('button');
   hubBtn.type = 'button';
@@ -546,9 +545,10 @@ export function buildMapPanel(
     currentRoomId === view.catalog.hubRoomId
       ? 'kq-btn kq-btn-sm kq-btn-active'
       : 'kq-btn kq-btn-sm kq-btn-primary';
-  hubBtn.textContent = '⌂ JUMP TO SUBROSA HAVEN HUB';
+  hubBtn.append(makeIcon(doc, 'home', 13), doc.createTextNode('Jump to Subrosa Haven'));
   hubBtn.disabled = currentRoomId === view.catalog.hubRoomId;
   hubBtn.addEventListener('click', () => {
+    actions.onUiSfx?.('confirm');
     actions.onReturnToHub();
   });
 
@@ -570,11 +570,12 @@ export function buildMapPanel(
       const b = doc.createElement('button');
       b.type = 'button';
       b.className = isHere ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm kq-btn-accent';
-      b.textContent = `⚡ ${r.name} (${r.biome})`;
+      b.append(makeIcon(doc, 'bolt', 12), doc.createTextNode(`${r.name} (${r.biome})`));
       b.disabled = isHere;
       b.addEventListener('focus', () => updateInspector(r));
       b.addEventListener('mouseenter', () => updateInspector(r));
       b.addEventListener('click', () => {
+        actions.onUiSfx?.('confirm');
         actions.onFastTravel(roomId);
       });
       tpRow.appendChild(b);
@@ -583,7 +584,6 @@ export function buildMapPanel(
   tpSec.appendChild(tpRow);
   panel.appendChild(tpSec);
 
-  // Biome Legend Strip (click a biome chip to scroll map to its first visited/known room)
   const biomeBar = doc.createElement('div');
   biomeBar.className = 'kq-map-biome-legend';
   for (const [biomeId, st] of regionStats.entries()) {
@@ -604,9 +604,11 @@ export function buildMapPanel(
     chip.append(sw, lbl);
 
     chip.addEventListener('click', () => {
-      const targetRoom = allRooms.find((r) => r.biome === biomeId && visitedSet.has(r.id))
-        ?? allRooms.find((r) => r.biome === biomeId);
+      const targetRoom =
+        allRooms.find((r) => r.biome === biomeId && visitedSet.has(r.id)) ??
+        allRooms.find((r) => r.biome === biomeId);
       if (targetRoom) {
+        actions.onUiSfx?.('move');
         const el = cellByRoomId.get(targetRoom.id) ?? null;
         centerOnCell(el);
         updateInspector(targetRoom);
@@ -616,7 +618,6 @@ export function buildMapPanel(
   }
   panel.appendChild(biomeBar);
 
-  // Auto-center current room once mounted
   if (typeof requestAnimationFrame === 'function' && currentCellEl) {
     const target = currentCellEl;
     requestAnimationFrame(() => {

@@ -1,3 +1,4 @@
+import { BIOME_PALETTES, HERO_FORM_PALETTES } from '../assets/palettes.js';
 import {
   HERO_FORMS,
   type AudioSettings,
@@ -22,10 +23,18 @@ import {
   type VirtualGamepadSnapshot,
 } from '../contracts/index.js';
 import { formatKeyCode } from '../input/InputOrchestrator.js';
+import { makeIcon, makeLogoCrest, type IconName } from './icons.js';
 import { buildMapPanel } from './MapOverlay.js';
 import { buildShopPanel } from './ShopMenus.js';
 import { buildTouchCustomizerSection } from './TouchCustomizer.js';
-import { buildCreditsPanel, buildGameOverPanel, buildVictoryPanel } from './VictoryScreens.js';
+import {
+  buildCreditsPanel,
+  buildGameOverPanel,
+  buildVictoryPanel,
+  computeCompletionPercent,
+} from './VictoryScreens.js';
+
+export type UiSfxKind = 'move' | 'confirm' | 'back' | 'tab' | 'error';
 
 export interface OverlayActions {
   onContinue(): void;
@@ -69,6 +78,8 @@ export interface OverlayActions {
   onKillRoomEnemies(): void;
   onForceSave(): void;
   onResetSave(): void;
+
+  onUiSfx?(kind: UiSfxKind): void;
 }
 
 export interface OverlayViewState {
@@ -91,11 +102,21 @@ export interface OverlayViewState {
   toastMessage: string | null;
 }
 
+type OptionsTabId = 'display' | 'controls' | 'touch' | 'audio' | 'keys';
+
+const OPTIONS_TABS: ReadonlyArray<{ id: OptionsTabId; label: string; icon: IconName }> = [
+  { id: 'display', label: 'Display', icon: 'palette' },
+  { id: 'controls', label: 'Controls', icon: 'gamepad' },
+  { id: 'touch', label: 'Touch', icon: 'touch' },
+  { id: 'audio', label: 'Audio', icon: 'volume' },
+  { id: 'keys', label: 'Keys', icon: 'keyboard' },
+];
+
 const KEYBIND_LABELS: ReadonlyArray<{ key: keyof KeyBindings; label: string }> = [
   { key: 'left', label: 'Move Left' },
   { key: 'right', label: 'Move Right' },
   { key: 'up', label: 'Look Up' },
-  { key: 'down', label: 'Down / Crouch' },
+  { key: 'down', label: 'Down / Drop' },
   { key: 'jump', label: 'Jump' },
   { key: 'dash', label: 'Dash / Ability' },
   { key: 'stomp', label: 'Stomp' },
@@ -118,18 +139,33 @@ const FORM_SHORT_LABELS: Record<HeroFormId, string> = {
 function deviceLabel(device: InputDeviceMode): string {
   switch (device) {
     case 'keyboard':
-      return 'KEYBOARD';
+      return 'Keyboard';
     case 'gamepad_xbox':
-      return 'XBOX PAD';
+      return 'Xbox Pad';
     case 'gamepad_ps':
-      return 'PS PAD';
+      return 'PlayStation Pad';
     case 'gamepad_switch':
-      return 'SWITCH PAD';
+      return 'Switch Pad';
     case 'gamepad_tesla':
-      return 'TESLA PAD';
+      return 'Tesla Pad';
     case 'touch':
-      return 'TOUCH';
+      return 'Touch';
   }
+}
+
+function deviceIcon(device: InputDeviceMode): IconName {
+  if (device === 'keyboard') return 'keyboard';
+  if (device === 'touch') return 'touch';
+  return 'gamepad';
+}
+
+function stripBrackets(glyph: string): string {
+  return glyph.startsWith('[') && glyph.endsWith(']') ? glyph.slice(1, -1) : glyph;
+}
+
+function setSliderFill(input: HTMLInputElement, val: number, min: number, max: number): void {
+  const pct = max > min ? Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100)) : 0;
+  input.style.setProperty('--slider-pct', `${pct.toFixed(1)}%`);
 }
 
 function makeNeutralButtons(count = 16): Array<{ pressed: boolean; value: number }> {
@@ -149,7 +185,6 @@ function makeVirtualTeslaSnapshot(activePulse: boolean): VirtualGamepadSnapshot 
   return {
     id: 'Tesla In-Car USB Gamepad (HID)',
     mapping: '',
-    // Axis 9 POV hat: -3/7 is Right (triggers device switch), 3.2857 is neutral
     axes: [0, 0, 0, 0, 0, 0, 0, 0, 0, activePulse ? -3 / 7 : 3.2857],
     buttons: makeNeutralButtons(),
   };
@@ -162,12 +197,15 @@ export class OverlayManager {
 
   private _screenLayer: HTMLElement | null = null;
   private _signBannerEl: HTMLElement | null = null;
+  private _signBannerTextEl: HTMLElement | null = null;
   private _toastEl: HTMLElement | null = null;
+  private _toastTextEl: HTMLElement | null = null;
   private _drawerEl: HTMLElement | null = null;
   private _drawerStatsEl: HTMLElement | null = null;
   private _deviceQaBtns = new Map<string, HTMLButtonElement>();
 
   private _drawerOpen = false;
+  private _optionsTab: OptionsTabId = 'display';
   private _selectedWarpRoom = '';
   private _selectedBossId: BossId = 'primal_eye';
   private _listeningBindKey: keyof KeyBindings | null = null;
@@ -182,8 +220,10 @@ export class OverlayManager {
     this._listeningBindKey = null;
     this._actions.onSetKeyCaptureSuppressed(false);
     if (ev.code !== 'Escape') {
+      this._actions.onUiSfx?.('confirm');
       this._actions.onRebindKey(targetKey, ev.code);
     } else if (this._lastView) {
+      this._actions.onUiSfx?.('back');
       this.render(this._lastView);
     }
   };
@@ -218,7 +258,6 @@ export class OverlayManager {
       this._selectedWarpRoom = view.simState.roomId;
     }
 
-    // Cancel rebinding if leaving options
     if (view.screenMode !== 'options' && this._listeningBindKey) {
       this._listeningBindKey = null;
       this._actions.onSetKeyCaptureSuppressed(false);
@@ -248,33 +287,51 @@ export class OverlayManager {
       this._navCooldown = Math.max(0, this._navCooldown - dt);
     }
 
-    // Close / Back shortcuts across Keyboard, Xbox, PS, Switch, Tesla Gamepad & Touch
     const gamepadBack = view.activeDevice !== 'keyboard' && frame.stompPressed;
     if (frame.pausePressed || gamepadBack) {
       if (view.screenMode === 'paused') {
+        this._actions.onUiSfx?.('back');
         this._actions.onResume();
         return;
       }
       if (view.screenMode === 'options') {
+        this._actions.onUiSfx?.('back');
         this._actions.onCloseOptions();
         return;
       }
       if (view.screenMode === 'shop') {
+        this._actions.onUiSfx?.('back');
         this._actions.onCloseShop();
         return;
       }
       if (view.screenMode === 'map') {
+        this._actions.onUiSfx?.('back');
         this._actions.onCloseMap();
         return;
       }
       if (view.screenMode === 'credits') {
+        this._actions.onUiSfx?.('back');
         this._actions.onReturnToTitle();
         return;
       }
     }
 
     if (frame.mapPressed && view.screenMode === 'map') {
+      this._actions.onUiSfx?.('back');
       this._actions.onCloseMap();
+      return;
+    }
+
+    // Quick Q/E or LB/RB tab switching inside Options
+    if (view.screenMode === 'options' && (frame.formNextPressed || frame.formPrevPressed)) {
+      const idx = OPTIONS_TABS.findIndex((t) => t.id === this._optionsTab);
+      const delta = frame.formNextPressed ? 1 : -1;
+      const next = OPTIONS_TABS[(idx + delta + OPTIONS_TABS.length) % OPTIONS_TABS.length];
+      if (next) {
+        this._optionsTab = next.id;
+        this._actions.onUiSfx?.('tab');
+        this.render(view);
+      }
       return;
     }
 
@@ -283,7 +340,6 @@ export class OverlayManager {
     const doc = this._root.ownerDocument;
     const active = (doc?.activeElement as HTMLElement | null) ?? null;
 
-    // Range slider horizontal adjustment via Gamepad / Keyboard Left-Right
     if (
       this._navCooldown <= 0 &&
       Math.abs(frame.moveX) > 0.5 &&
@@ -310,7 +366,6 @@ export class OverlayManager {
       return;
     }
 
-    // Move focus with Up/Down or Left/Right on Keyboard or Gamepad
     const moveVertical = Math.abs(frame.moveY) > 0.5;
     const moveHorizontal = Math.abs(frame.moveX) > 0.5;
     if (this._navCooldown <= 0 && (moveVertical || moveHorizontal)) {
@@ -331,6 +386,7 @@ export class OverlayManager {
         const nextEl = focusables[nextIdx];
         if (nextEl) {
           nextEl.focus?.({ preventScroll: true });
+          this._actions.onUiSfx?.('move');
           if (typeof nextEl.scrollIntoView === 'function') {
             nextEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
           }
@@ -339,7 +395,6 @@ export class OverlayManager {
       }
     }
 
-    // Confirm via Gamepad A / Y (keyboard Enter/Space natively clicks focused buttons)
     if (view.activeDevice !== 'keyboard' && (frame.jumpPressed || frame.interactPressed)) {
       if (active && this._screenLayer.contains(active)) {
         if (active.tagName === 'SELECT') {
@@ -369,13 +424,15 @@ export class OverlayManager {
     }
     this._screenLayer = null;
     this._signBannerEl = null;
+    this._signBannerTextEl = null;
     this._toastEl = null;
+    this._toastTextEl = null;
     this._drawerEl = null;
     this._drawerStatsEl = null;
   }
 
   // --------------------------------------------------------------------------
-  // Screen Rendering Dispatch (Delegates cleanly to specialized meta-UI modules)
+  // Screen Dispatch
   // --------------------------------------------------------------------------
 
   private _renderScreenLayer(doc: Document, view: OverlayViewState): void {
@@ -397,127 +454,130 @@ export class OverlayManager {
       view.screenMode === 'title' ? 'kq-screen-backdrop kq-title-backdrop' : 'kq-screen-backdrop';
     backdrop.setAttribute('data-screen', view.screenMode);
 
-    let panel: HTMLElement;
+    // Clicking backdrop dismisses contextual overlays (Pause, Map, Shop)
+    if (view.screenMode === 'paused' || view.screenMode === 'map' || view.screenMode === 'shop') {
+      backdrop.addEventListener('click', (ev) => {
+        if (ev.target !== backdrop) return;
+        this._actions.onUiSfx?.('back');
+        if (view.screenMode === 'paused') this._actions.onResume();
+        else if (view.screenMode === 'map') this._actions.onCloseMap();
+        else if (view.screenMode === 'shop') this._actions.onCloseShop();
+      });
+    }
+
+    let content: HTMLElement;
     switch (view.screenMode) {
       case 'title':
-        panel = this._buildTitlePanel(doc, view);
+        content = this._buildTitleStage(doc, view);
         break;
       case 'paused':
-        panel = this._buildPausePanel(doc, view);
+        content = this._buildPausePanel(doc, view);
         break;
       case 'options':
-        panel = this._buildOptionsPanel(doc, view);
+        content = this._buildOptionsPanel(doc, view);
         break;
       case 'shop':
-        panel = buildShopPanel(doc, view, this._actions);
+        content = buildShopPanel(doc, view, this._actions);
         break;
       case 'map':
-        panel = buildMapPanel(doc, view, this._actions);
+        content = buildMapPanel(doc, view, this._actions);
         break;
       case 'victory':
-        panel = buildVictoryPanel(doc, view, this._actions);
+        content = buildVictoryPanel(doc, view, this._actions);
         break;
       case 'gameover':
-        panel = buildGameOverPanel(doc, view, this._actions);
+        content = buildGameOverPanel(doc, view, this._actions);
         break;
       case 'credits':
-        panel = buildCreditsPanel(doc, view, this._actions);
+        content = buildCreditsPanel(doc, view, this._actions);
         break;
       default:
         return;
     }
 
-    backdrop.appendChild(panel);
+    backdrop.appendChild(content);
     this._root.appendChild(backdrop);
     this._screenLayer = backdrop;
 
-    // Auto-focus primary interactive button for immediate keyboard/gamepad flow
     const preferred =
-      panel.querySelector<HTMLButtonElement>('.kq-btn-primary:not(:disabled)') ??
-      panel.querySelector<HTMLButtonElement>('button:not(:disabled)');
+      content.querySelector<HTMLButtonElement>('.kq-btn-primary:not(:disabled)') ??
+      content.querySelector<HTMLButtonElement>('button:not(:disabled)');
     preferred?.focus?.({ preventScroll: true });
   }
 
-  private _buildTitlePanel(doc: Document, view: OverlayViewState): HTMLElement {
-    const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-title';
+  // --------------------------------------------------------------------------
+  // Open-Air Theatrical Title Screen
+  // --------------------------------------------------------------------------
 
-    const logoWrap = doc.createElement('div');
-    logoWrap.className = 'kq-logo-wrap';
+  private _buildTitleStage(doc: Document, view: OverlayViewState): HTMLElement {
+    const stage = doc.createElement('div');
+    stage.className = 'kq-title-stage';
 
-    const h1 = doc.createElement('h1');
-    h1.className = 'kq-logo';
-    h1.textContent = 'KRUNKED QUEST';
+    // 1. Top utility strip: Edition pill on left, compact Art Pack controller on right
+    const topBar = doc.createElement('div');
+    topBar.className = 'kq-title-topbar';
 
-    const sub = doc.createElement('div');
-    sub.className = 'kq-subtitle';
-    sub.textContent = '16-BIT ACTION PLATFORMER';
-
-    logoWrap.append(h1, sub);
-    panel.appendChild(logoWrap);
-
-    const list = doc.createElement('div');
-    list.className = 'kq-menu-list';
-
-    if (view.hasSave) {
-      const contBtn = this._btn(doc, 'CONTINUE', 'kq-btn kq-btn-primary', () => this._actions.onContinue());
-      if (view.saveSummary) {
-        const meta = doc.createElement('span');
-        meta.className = 'kq-continue-meta';
-        meta.textContent = `(${view.saveSummary.roomName} · ${view.saveSummary.crystals}◆ · ${view.saveSummary.coins}★)`;
-        contBtn.appendChild(meta);
-      }
-      list.appendChild(contBtn);
-    }
-
-    list.appendChild(
-      this._btn(
-        doc,
-        'NEW GAME',
-        view.hasSave ? 'kq-btn' : 'kq-btn kq-btn-primary',
-        () => this._actions.onNewGame(),
-      ),
+    const editionPill = doc.createElement('div');
+    editionPill.className = 'kq-title-version-pill';
+    editionPill.append(
+      makeIcon(doc, 'sparkle', 13),
+      doc.createTextNode(`${view.catalog.rooms.size} Rooms · 11 Biomes`),
     );
-    list.appendChild(this._btn(doc, 'GHOST SHIP ENDLESS', 'kq-btn', () => this._actions.onStartGhostShip()));
-    list.appendChild(this._btn(doc, 'TIME ATTACK', 'kq-btn', () => this._actions.onStartTimeAttack()));
-    list.appendChild(this._btn(doc, 'OPTIONS', 'kq-btn', () => this._actions.onOpenOptions('title')));
-    list.appendChild(this._btn(doc, 'CREDITS', 'kq-btn', () => this._actions.onOpenCredits()));
 
-    panel.appendChild(list);
+    const packBar = doc.createElement('div');
+    packBar.className = 'kq-title-pack-bar';
 
-    // Custom Art Pack bar
-    const packBox = doc.createElement('div');
-    packBox.className = 'kq-pack-box';
+    const dot = doc.createElement('span');
+    dot.className = view.customPackEnabled
+      ? 'kq-pack-dot kq-pack-dot-active'
+      : view.customPackAvailable
+        ? 'kq-pack-dot kq-pack-dot-ready'
+        : 'kq-pack-dot';
 
-    const statusRow = doc.createElement('div');
-    statusRow.className = 'kq-pack-row';
+    const statusTxt = doc.createElement('span');
+    statusTxt.className = 'kq-pack-status-text';
+    statusTxt.textContent = view.customPackAvailable
+      ? `Art (${view.customPackCount})`
+      : 'Art';
 
-    const badge = doc.createElement('span');
-    if (view.customPackEnabled) {
-      badge.className = 'kq-badge kq-badge-active';
-      badge.textContent = `CUSTOM PACK ACTIVE (${view.customPackCount} ASSETS)`;
-    } else if (view.customPackAvailable) {
-      badge.className = 'kq-badge kq-badge-ready';
-      badge.textContent = `PACK READY (${view.customPackCount} ASSETS)`;
-    } else {
-      badge.className = 'kq-badge';
-      badge.textContent = 'BUILT-IN PIXEL ART';
-    }
-    statusRow.appendChild(badge);
-    packBox.appendChild(statusRow);
-
-    const btnRow = doc.createElement('div');
-    btnRow.className = 'kq-pack-row';
-
-    const loadBtn = this._btn(
+    const customBtn = this._iconBtn(
       doc,
-      this._packLoading ? 'LOADING PACK...' : 'LOAD CUSTOM PACK',
-      'kq-btn kq-btn-sm kq-btn-accent',
+      'Custom Pack',
+      'sparkle',
+      view.customPackEnabled ? 'kq-btn kq-btn-xs kq-btn-pill kq-btn-active' : 'kq-btn kq-btn-xs kq-btn-pill',
+      () => {
+        if (view.customPackEnabled) return;
+        this._actions.onUiSfx?.('tab');
+        this._actions.onToggleCustomPack(true);
+      },
+    );
+    customBtn.setAttribute('aria-pressed', String(view.customPackEnabled));
+    if (!view.customPackAvailable) {
+      customBtn.title = 'Load a custom pack folder first to enable custom sprites';
+    }
+
+    const builtInBtn = this._iconBtn(
+      doc,
+      'Built-In',
+      'palette',
+      !view.customPackEnabled ? 'kq-btn kq-btn-xs kq-btn-pill kq-btn-active' : 'kq-btn kq-btn-xs kq-btn-pill',
+      () => {
+        if (!view.customPackEnabled) return;
+        this._actions.onUiSfx?.('tab');
+        this._actions.onToggleCustomPack(false);
+      },
+    );
+    builtInBtn.setAttribute('aria-pressed', String(!view.customPackEnabled));
+
+    const loadBtn = this._iconBtn(
+      doc,
+      this._packLoading ? 'Loading…' : 'Load',
+      'folder',
+      'kq-btn kq-btn-xs kq-btn-pill kq-btn-accent',
       () => {
         if (this._packLoading) return;
         this._packLoading = true;
         loadBtn.disabled = true;
-        loadBtn.textContent = 'LOADING PACK...';
         void this._actions.onLoadCustomPack().finally(() => {
           this._packLoading = false;
         });
@@ -525,72 +585,270 @@ export class OverlayManager {
     );
     loadBtn.disabled = this._packLoading;
 
-    const toggleLabel = view.customPackEnabled ? 'USE BUILT-IN ART' : 'USE CUSTOM PACK';
-    const toggleBtn = this._btn(
-      doc,
-      toggleLabel,
-      view.customPackEnabled ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-      () => {
-        this._actions.onToggleCustomPack(!view.customPackEnabled);
-      },
-    );
-    if (!view.customPackAvailable && !view.customPackEnabled) {
-      toggleBtn.title = 'Load a custom pack folder first to enable custom sprites';
+    packBar.append(dot, statusTxt, customBtn, builtInBtn, loadBtn);
+    topBar.append(editionPill, packBar);
+    stage.appendChild(topBar);
+
+    // 2. Center Hero Crest + Wordmark + Sculpted Menu Dock
+    const center = doc.createElement('div');
+    center.className = 'kq-title-center';
+
+    const logoWrap = doc.createElement('div');
+    logoWrap.className = 'kq-logo-wrap';
+
+    const crest = makeLogoCrest(doc);
+
+    const h1 = doc.createElement('h1');
+    h1.className = 'kq-logo';
+    h1.textContent = 'KRUNKED QUEST';
+
+    const sub = doc.createElement('div');
+    sub.className = 'kq-subtitle-pill';
+    sub.append(makeIcon(doc, 'flame', 12), doc.createTextNode('16-Bit Action Metroidvania'));
+
+    logoWrap.append(crest, h1, sub);
+    center.appendChild(logoWrap);
+
+    const dock = doc.createElement('div');
+    dock.className = 'kq-title-dock';
+
+    if (view.hasSave) {
+      const contBtn = this._menuBtn(doc, 'Continue Quest', 'play', 'kq-btn kq-btn-menu kq-btn-primary', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onContinue();
+      });
+      if (view.saveSummary) {
+        const meta = doc.createElement('span');
+        meta.className = 'kq-continue-meta';
+        meta.textContent = `${view.saveSummary.roomName} · ${view.saveSummary.coins}/${view.catalog.totalCoins}`;
+        const left = contBtn.querySelector('.kq-btn-menu-left');
+        if (left) {
+          const stack = doc.createElement('span');
+          stack.style.display = 'flex';
+          stack.style.flexDirection = 'column';
+          stack.style.gap = '1px';
+          const mainLbl = left.lastChild;
+          if (mainLbl) stack.appendChild(mainLbl);
+          stack.appendChild(meta);
+          left.appendChild(stack);
+        }
+      }
+      dock.appendChild(contBtn);
     }
 
-    btnRow.append(loadBtn, toggleBtn);
-    packBox.appendChild(btnRow);
+    dock.appendChild(
+      this._menuBtn(
+        doc,
+        'New Game',
+        'sparkle',
+        view.hasSave ? 'kq-btn kq-btn-menu' : 'kq-btn kq-btn-menu kq-btn-primary',
+        () => {
+          this._actions.onUiSfx?.('confirm');
+          this._actions.onNewGame();
+        },
+      ),
+    );
+
+    dock.appendChild(
+      this._menuBtn(doc, 'Ghost Ship Endless', 'anchor', 'kq-btn kq-btn-menu', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onStartGhostShip();
+      }),
+    );
+
+    dock.appendChild(
+      this._menuBtn(doc, 'Time Attack', 'clock', 'kq-btn kq-btn-menu', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onStartTimeAttack();
+      }),
+    );
+
+    const secRow = doc.createElement('div');
+    secRow.className = 'kq-title-secondary-row';
+    secRow.append(
+      this._iconBtn(doc, 'Options', 'gear', 'kq-btn', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onOpenOptions('title');
+      }),
+      this._iconBtn(doc, 'Credits', 'trophy', 'kq-btn', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onOpenCredits();
+      }),
+    );
+    dock.appendChild(secRow);
 
     if (view.customPackMessage) {
       const msg = doc.createElement('div');
-      msg.className = 'kq-panel-subheading';
+      msg.className = 'kq-pack-feedback';
       msg.textContent = view.customPackMessage;
-      packBox.appendChild(msg);
+      dock.appendChild(msg);
     }
 
-    panel.appendChild(packBox);
+    center.appendChild(dock);
+    stage.appendChild(center);
 
-    const footer = doc.createElement('div');
-    footer.className = 'kq-footer-hint';
-    footer.textContent = `${deviceLabel(view.activeDevice)} · JUMP ${view.glyphs.jump} · DASH ${view.glyphs.dash} · STOMP ${view.glyphs.stomp} · [F9] PLAYTEST`;
-    panel.appendChild(footer);
+    // 3. Bottom Control Legend Strip
+    const ctrlBar = doc.createElement('div');
+    ctrlBar.className = 'kq-title-controls';
 
-    return panel;
+    const addCtrlChip = (label: string, keyText: string) => {
+      const chip = doc.createElement('span');
+      chip.className = 'kq-ctrl-chip';
+      const cap = doc.createElement('span');
+      cap.className = 'kq-keycap';
+      cap.textContent = stripBrackets(keyText);
+      chip.append(cap, doc.createTextNode(label));
+      ctrlBar.appendChild(chip);
+    };
+
+    const devChip = doc.createElement('span');
+    devChip.className = 'kq-ctrl-chip';
+    devChip.style.color = 'var(--kq-cyan)';
+    devChip.append(makeIcon(doc, deviceIcon(view.activeDevice), 14), doc.createTextNode(deviceLabel(view.activeDevice)));
+    ctrlBar.appendChild(devChip);
+
+    const sep = () => {
+      const d = doc.createElement('span');
+      d.className = 'kq-ctrl-sep';
+      return d;
+    };
+
+    ctrlBar.appendChild(sep());
+    addCtrlChip('Jump', view.glyphs.jump);
+    addCtrlChip('Dash', view.glyphs.dash);
+    addCtrlChip('Stomp', view.glyphs.stomp);
+    ctrlBar.appendChild(sep());
+    addCtrlChip('Playtest', 'F9');
+
+    stage.appendChild(ctrlBar);
+    return stage;
   }
+
+  // --------------------------------------------------------------------------
+  // Pause Panel with Live Adventure Telemetry
+  // --------------------------------------------------------------------------
 
   private _buildPausePanel(doc: Document, view: OverlayViewState): HTMLElement {
     const panel = doc.createElement('div');
-    panel.className = 'kq-panel kq-panel-title';
+    panel.className = 'kq-panel kq-panel-pause';
+
+    const room = view.catalog.rooms.get(view.simState.roomId);
+    const biomePal = room ? BIOME_PALETTES[room.biome] : undefined;
 
     const header = doc.createElement('div');
     header.className = 'kq-panel-header';
+
+    const headLeft = doc.createElement('div');
     const title = doc.createElement('h2');
     title.className = 'kq-panel-heading';
     title.textContent = 'PAUSED';
-    const roomBadge = doc.createElement('span');
-    roomBadge.className = 'kq-badge kq-badge-gold';
-    roomBadge.textContent = view.catalog.rooms.get(view.simState.roomId)?.name ?? view.simState.roomId;
-    header.append(title, roomBadge);
+    const sub = doc.createElement('div');
+    sub.className = 'kq-panel-subheading';
+    sub.textContent = room?.name ?? view.simState.roomId;
+    headLeft.append(title, sub);
+
+    const rightTags = doc.createElement('div');
+    rightTags.style.display = 'inline-flex';
+    rightTags.style.gap = '6px';
+    rightTags.style.alignItems = 'center';
+
+    if (room && biomePal) {
+      const bChip = doc.createElement('span');
+      bChip.className = 'kq-biome-chip';
+      bChip.style.backgroundColor = biomePal.skyBot;
+      bChip.style.borderColor = biomePal.colors[0];
+      bChip.textContent = biomePal.label;
+      rightTags.appendChild(bChip);
+    }
+
+    const formChip = doc.createElement('span');
+    formChip.className = 'kq-badge';
+    const fSw = doc.createElement('span');
+    fSw.className = 'kq-swatch';
+    fSw.style.backgroundColor = HERO_FORM_PALETTES[view.simState.hero.form][0];
+    formChip.append(fSw, doc.createTextNode(FORM_SHORT_LABELS[view.simState.hero.form]));
+    rightTags.appendChild(formChip);
+
+    header.append(headLeft, rightTags);
     panel.appendChild(header);
+
+    // Live Run Status Strip
+    const summary = doc.createElement('div');
+    summary.className = 'kq-pause-summary';
+    const addMetric = (icon: IconName, color: string, val: string, lbl: string) => {
+      const box = doc.createElement('div');
+      box.className = 'kq-pause-metric';
+      const v = doc.createElement('div');
+      v.className = 'kq-pause-metric-val';
+      const ic = makeIcon(doc, icon, 14);
+      ic.style.color = color;
+      v.append(ic, doc.createTextNode(val));
+      const l = doc.createElement('div');
+      l.className = 'kq-pause-metric-lbl';
+      l.textContent = lbl;
+      box.append(v, l);
+      summary.appendChild(box);
+    };
+
+    addMetric('heart', '#ff546e', `${view.simState.hero.hp}/${view.simState.hero.maxHp}`, 'Hearts');
+    addMetric('crystal', '#56ecff', String(view.simState.progress.crystals), 'Crystals');
+    addMetric(
+      'coin',
+      '#ffd84d',
+      `${view.simState.progress.collectedCoinIds.length}/${view.catalog.totalCoins}`,
+      'Coins',
+    );
+    addMetric('trophy', '#52e88a', `${computeCompletionPercent(view)}%`, 'Quest');
+    panel.appendChild(summary);
 
     const list = doc.createElement('div');
     list.className = 'kq-menu-list';
-    list.appendChild(this._btn(doc, 'RESUME', 'kq-btn kq-btn-primary', () => this._actions.onResume()));
-    list.appendChild(this._btn(doc, 'WORLD MAP', 'kq-btn kq-btn-accent', () => this._actions.onOpenMap()));
-    list.appendChild(this._btn(doc, 'OPTIONS', 'kq-btn', () => this._actions.onOpenOptions('paused')));
-    list.appendChild(this._btn(doc, 'RETURN TO HUB', 'kq-btn', () => this._actions.onReturnToHub()));
     list.appendChild(
-      this._btn(doc, 'SAVE & QUIT TO TITLE', 'kq-btn kq-btn-danger', () => this._actions.onSaveAndQuit()),
+      this._menuBtn(doc, 'Resume Quest', 'play', 'kq-btn kq-btn-menu kq-btn-primary', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onResume();
+      }),
+    );
+    list.appendChild(
+      this._menuBtn(doc, 'World Map', 'map', 'kq-btn kq-btn-menu kq-btn-accent', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onOpenMap();
+      }),
+    );
+    list.appendChild(
+      this._menuBtn(doc, 'Options', 'gear', 'kq-btn kq-btn-menu', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onOpenOptions('paused');
+      }),
+    );
+    list.appendChild(
+      this._menuBtn(doc, 'Return to Subrosa Haven', 'home', 'kq-btn kq-btn-menu', () => {
+        this._actions.onUiSfx?.('confirm');
+        this._actions.onReturnToHub();
+      }),
+    );
+    list.appendChild(
+      this._menuBtn(doc, 'Save & Quit to Title', 'close', 'kq-btn kq-btn-menu kq-btn-danger', () => {
+        this._actions.onUiSfx?.('back');
+        this._actions.onSaveAndQuit();
+      }),
     );
     panel.appendChild(list);
 
     const footer = doc.createElement('div');
     footer.className = 'kq-footer-hint';
-    footer.textContent = `CRYSTALS: ${view.simState.progress.crystals} · COINS: ${view.simState.progress.collectedCoinIds.length}/${view.catalog.totalCoins} · ${deviceLabel(view.activeDevice)}`;
+    footer.append(
+      makeIcon(doc, deviceIcon(view.activeDevice), 13),
+      doc.createTextNode(`${deviceLabel(view.activeDevice)} · Press ${stripBrackets(view.glyphs.pause)} to Resume`),
+    );
     panel.appendChild(footer);
 
     return panel;
   }
+
+  // --------------------------------------------------------------------------
+  // Tabbed Options Panel
+  // --------------------------------------------------------------------------
 
   private _buildOptionsPanel(doc: Document, view: OverlayViewState): HTMLElement {
     const panel = doc.createElement('div');
@@ -598,227 +856,291 @@ export class OverlayManager {
 
     const header = doc.createElement('div');
     header.className = 'kq-panel-header';
+
+    const titleWrap = doc.createElement('div');
     const title = doc.createElement('h2');
     title.className = 'kq-panel-heading';
-    title.textContent = 'OPTIONS';
-    const backBtn = this._btn(doc, 'BACK', 'kq-btn kq-btn-sm kq-btn-primary', () => this._actions.onCloseOptions());
-    header.append(title, backBtn);
+    title.append(makeIcon(doc, 'gear', 19), doc.createTextNode('OPTIONS'));
+    titleWrap.appendChild(title);
+
+    const backBtn = this._iconBtn(doc, 'Back', 'close', 'kq-btn kq-btn-sm kq-btn-primary', () => {
+      this._actions.onUiSfx?.('back');
+      this._actions.onCloseOptions();
+    });
+    header.append(titleWrap, backBtn);
     panel.appendChild(header);
+
+    // 5-Tab Bar
+    const tabBar = doc.createElement('div');
+    tabBar.className = 'kq-tab-bar';
+    tabBar.setAttribute('role', 'tablist');
+    for (const tab of OPTIONS_TABS) {
+      const btn = doc.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('role', 'tab');
+      const active = this._optionsTab === tab.id;
+      btn.setAttribute('aria-selected', String(active));
+      btn.setAttribute('data-options-tab', tab.id);
+      btn.className = active ? 'kq-tab kq-tab-active' : 'kq-tab';
+      btn.append(makeIcon(doc, tab.icon, 14), doc.createTextNode(tab.label));
+      btn.addEventListener('click', () => {
+        if (this._optionsTab === tab.id) return;
+        this._optionsTab = tab.id;
+        this._actions.onUiSfx?.('tab');
+        this.render(view);
+      });
+      tabBar.appendChild(btn);
+    }
+    panel.appendChild(tabBar);
 
     const scroll = doc.createElement('div');
     scroll.className = 'kq-panel-scroll';
 
-    // 1. Display & Art
-    const displaySec = this._section(doc, 'Display & Art');
+    if (this._optionsTab === 'display') {
+      const displaySec = this._section(doc, 'Display & Visuals', 'palette');
 
-    const fpsRow = this._optRow(doc, 'FPS Limit');
-    const fpsGroup = doc.createElement('div');
-    fpsGroup.className = 'kq-seg-group';
-    const fpsChoices: readonly FpsLimitOption[] = [30, 60, 120];
-    for (const fps of fpsChoices) {
-      fpsGroup.appendChild(
+      const fpsRow = this._optRow(doc, 'Frame Rate Limit', 'Simulation stays deterministic at 60 Hz with smooth interpolation');
+      const fpsGroup = doc.createElement('div');
+      fpsGroup.className = 'kq-seg-group';
+      const fpsChoices: readonly FpsLimitOption[] = [30, 60, 120];
+      for (const fps of fpsChoices) {
+        fpsGroup.appendChild(
+          this._btn(
+            doc,
+            `${fps} FPS`,
+            view.settings.render.fpsLimit === fps ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+            () => {
+              this._actions.onUiSfx?.('confirm');
+              this._actions.onUpdateRenderSettings({ fpsLimit: fps });
+            },
+          ),
+        );
+      }
+      fpsRow.appendChild(fpsGroup);
+      displaySec.appendChild(fpsRow);
+
+      const snapRow = this._optRow(doc, 'Classic Native-Snap', 'Lock rendering to crisp 60 Hz pixel steps without sub-frame interpolation');
+      snapRow.appendChild(
         this._btn(
           doc,
-          `${fps} FPS`,
-          view.settings.render.fpsLimit === fps ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-          () => this._actions.onUpdateRenderSettings({ fpsLimit: fps }),
+          view.settings.render.classicSnap ? 'ON' : 'OFF',
+          view.settings.render.classicSnap ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+          () => {
+            this._actions.onUiSfx?.('confirm');
+            this._actions.onUpdateRenderSettings({ classicSnap: !view.settings.render.classicSnap });
+          },
         ),
       );
-    }
-    fpsRow.appendChild(fpsGroup);
-    displaySec.appendChild(fpsRow);
+      displaySec.appendChild(snapRow);
 
-    const snapRow = this._optRow(doc, 'Classic Native-Snap');
-    snapRow.appendChild(
-      this._btn(
-        doc,
-        view.settings.render.classicSnap ? 'ON' : 'OFF',
-        view.settings.render.classicSnap ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-        () => this._actions.onUpdateRenderSettings({ classicSnap: !view.settings.render.classicSnap }),
-      ),
-    );
-    displaySec.appendChild(snapRow);
-
-    const shakeRow = this._optRow(doc, 'Screen Shake');
-    shakeRow.appendChild(
-      this._btn(
-        doc,
-        view.settings.render.screenShake ? 'ON' : 'OFF',
-        view.settings.render.screenShake ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-        () => this._actions.onUpdateRenderSettings({ screenShake: !view.settings.render.screenShake }),
-      ),
-    );
-    displaySec.appendChild(shakeRow);
-
-    const packRow = this._optRow(doc, 'Art Style');
-    const packGroup = doc.createElement('div');
-    packGroup.className = 'kq-seg-group';
-    packGroup.appendChild(
-      this._btn(
-        doc,
-        view.customPackEnabled ? 'CUSTOM PACK' : 'BUILT-IN ART',
-        view.customPackEnabled ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-        () => this._actions.onToggleCustomPack(!view.customPackEnabled),
-      ),
-    );
-    packGroup.appendChild(
-      this._btn(doc, 'LOAD FOLDER', 'kq-btn kq-btn-sm kq-btn-accent', () => {
-        void this._actions.onLoadCustomPack();
-      }),
-    );
-    packRow.appendChild(packGroup);
-    displaySec.appendChild(packRow);
-
-    scroll.appendChild(displaySec);
-
-    // 2. Input & Gamepad Settings
-    const ctrlSec = this._section(doc, 'Device & Gamepad Controls');
-
-    const touchModeRow = this._optRow(doc, 'Touch Overlay Visibility');
-    const touchGroup = doc.createElement('div');
-    touchGroup.className = 'kq-seg-group';
-    const touchChoices: ReadonlyArray<{ mode: TouchVisibilitySetting; label: string }> = [
-      { mode: 'auto', label: 'AUTO' },
-      { mode: 'always_on', label: 'ALWAYS ON' },
-      { mode: 'off', label: 'OFF' },
-    ];
-    for (const c of touchChoices) {
-      touchGroup.appendChild(
+      const shakeRow = this._optRow(doc, 'Screen Shake', 'Pixel-snapped camera recoil on stomps, blasts, and boss hits');
+      shakeRow.appendChild(
         this._btn(
           doc,
-          c.label,
-          view.settings.input.touchMode === c.mode ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-          () => this._actions.onUpdateInputSettings({ touchMode: c.mode }),
+          view.settings.render.screenShake ? 'ON' : 'OFF',
+          view.settings.render.screenShake ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+          () => {
+            this._actions.onUiSfx?.('confirm');
+            this._actions.onUpdateRenderSettings({ screenShake: !view.settings.render.screenShake });
+          },
         ),
       );
-    }
-    touchModeRow.appendChild(touchGroup);
-    ctrlSec.appendChild(touchModeRow);
+      displaySec.appendChild(shakeRow);
 
-    const hapticRow = this._optRow(doc, 'Gamepad Haptics');
-    hapticRow.appendChild(
-      this._btn(
+      const packRow = this._optRow(
         doc,
-        view.settings.input.hapticsEnabled ? 'ON' : 'OFF',
-        view.settings.input.hapticsEnabled ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
-        () => this._actions.onUpdateInputSettings({ hapticsEnabled: !view.settings.input.hapticsEnabled }),
-      ),
-    );
-    ctrlSec.appendChild(hapticRow);
-
-    ctrlSec.appendChild(
-      this._sliderRow(
-        doc,
-        'Stick Deadzone',
-        0.1,
-        0.4,
-        0.02,
-        view.settings.input.deadzone,
-        (v) => v.toFixed(2),
-        (v) => this._actions.onUpdateInputSettings({ deadzone: v }),
-      ),
-    );
-    scroll.appendChild(ctrlSec);
-
-    // 3. Dedicated Interactive Touch Layout Customizer
-    scroll.appendChild(buildTouchCustomizerSection(doc, view, this._actions));
-
-    // 4. Audio
-    const audioSec = this._section(doc, 'Audio');
-    audioSec.appendChild(
-      this._sliderRow(
-        doc,
-        'Master Volume',
-        0,
-        1,
-        0.05,
-        view.settings.audio.masterVolume,
-        (v) => `${Math.round(v * 100)}%`,
-        (v) => this._actions.onUpdateAudioSettings({ masterVolume: v }),
-      ),
-    );
-    audioSec.appendChild(
-      this._sliderRow(
-        doc,
-        'SFX Volume',
-        0,
-        1,
-        0.05,
-        view.settings.audio.sfxVolume,
-        (v) => `${Math.round(v * 100)}%`,
-        (v) => this._actions.onUpdateAudioSettings({ sfxVolume: v }),
-      ),
-    );
-    audioSec.appendChild(
-      this._sliderRow(
-        doc,
-        'Music Volume',
-        0,
-        1,
-        0.05,
-        view.settings.audio.musicVolume,
-        (v) => `${Math.round(v * 100)}%`,
-        (v) => this._actions.onUpdateAudioSettings({ musicVolume: v }),
-      ),
-    );
-    const muteRow = this._optRow(doc, 'Mute All Audio');
-    muteRow.appendChild(
-      this._btn(
-        doc,
-        view.settings.audio.muted ? 'MUTED' : 'SOUND ON',
-        view.settings.audio.muted ? 'kq-btn kq-btn-sm kq-btn-danger' : 'kq-btn kq-btn-sm kq-btn-active',
-        () => this._actions.onUpdateAudioSettings({ muted: !view.settings.audio.muted }),
-      ),
-    );
-    audioSec.appendChild(muteRow);
-    scroll.appendChild(audioSec);
-
-    // 5. Key Bindings
-    const bindSec = this._section(doc, 'Keyboard Bindings');
-    const bindGrid = doc.createElement('div');
-    bindGrid.className = 'kq-bind-grid';
-
-    for (const item of KEYBIND_LABELS) {
-      const row = doc.createElement('div');
-      row.className = 'kq-bind-row';
-
-      const lbl = doc.createElement('span');
-      lbl.textContent = item.label;
-
-      const isListening = this._listeningBindKey === item.key;
-      const code = view.settings.input.bindings[item.key];
-      const bindBtn = this._btn(
-        doc,
-        isListening ? 'PRESS KEY...' : formatKeyCode(code),
-        isListening ? 'kq-btn kq-btn-sm kq-btn-primary' : 'kq-btn kq-btn-sm',
-        () => {
-          this._listeningBindKey = item.key;
-          this._actions.onSetKeyCaptureSuppressed(true);
-          this.render(view);
-        },
+        'Art Pack Mode',
+        view.customPackAvailable
+          ? `${view.customPackCount} custom pack sprites loaded and ready`
+          : 'Switch live between Built-In pixel art or a local Custom Pack folder',
       );
-      row.append(lbl, bindBtn);
-      bindGrid.appendChild(row);
+      const packGroup = doc.createElement('div');
+      packGroup.className = 'kq-seg-group';
+      packGroup.appendChild(
+        this._btn(
+          doc,
+          view.customPackEnabled ? 'Custom Pack' : 'Built-In Art',
+          view.customPackEnabled ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+          () => {
+            this._actions.onUiSfx?.('confirm');
+            this._actions.onToggleCustomPack(!view.customPackEnabled);
+          },
+        ),
+      );
+      packGroup.appendChild(
+        this._iconBtn(doc, 'Load Folder', 'folder', 'kq-btn kq-btn-sm kq-btn-accent', () => {
+          void this._actions.onLoadCustomPack();
+        }),
+      );
+      packRow.appendChild(packGroup);
+      displaySec.appendChild(packRow);
+
+      scroll.appendChild(displaySec);
+    } else if (this._optionsTab === 'controls') {
+      const ctrlSec = this._section(doc, 'Device & Gamepad Controls', 'gamepad');
+
+      const touchModeRow = this._optRow(doc, 'Touch Overlay Visibility', 'Auto activates seamlessly only when touching the screen');
+      const touchGroup = doc.createElement('div');
+      touchGroup.className = 'kq-seg-group';
+      const touchChoices: ReadonlyArray<{ mode: TouchVisibilitySetting; label: string }> = [
+        { mode: 'auto', label: 'Auto' },
+        { mode: 'always_on', label: 'Always On' },
+        { mode: 'off', label: 'Off' },
+      ];
+      for (const c of touchChoices) {
+        touchGroup.appendChild(
+          this._btn(
+            doc,
+            c.label,
+            view.settings.input.touchMode === c.mode ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+            () => {
+              this._actions.onUiSfx?.('confirm');
+              this._actions.onUpdateInputSettings({ touchMode: c.mode });
+            },
+          ),
+        );
+      }
+      touchModeRow.appendChild(touchGroup);
+      ctrlSec.appendChild(touchModeRow);
+
+      const hapticRow = this._optRow(doc, 'Gamepad Haptics', 'Dual-rumble vibration feedback on stomps, damage, and heals');
+      hapticRow.appendChild(
+        this._btn(
+          doc,
+          view.settings.input.hapticsEnabled ? 'ON' : 'OFF',
+          view.settings.input.hapticsEnabled ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+          () => {
+            this._actions.onUiSfx?.('confirm');
+            this._actions.onUpdateInputSettings({ hapticsEnabled: !view.settings.input.hapticsEnabled });
+          },
+        ),
+      );
+      ctrlSec.appendChild(hapticRow);
+
+      ctrlSec.appendChild(
+        this._sliderRow(
+          doc,
+          'Analog Stick Deadzone',
+          0.1,
+          0.4,
+          0.02,
+          view.settings.input.deadzone,
+          (v) => v.toFixed(2),
+          (v) => this._actions.onUpdateInputSettings({ deadzone: v }),
+        ),
+      );
+      scroll.appendChild(ctrlSec);
+    } else if (this._optionsTab === 'touch') {
+      scroll.appendChild(buildTouchCustomizerSection(doc, view, this._actions));
+    } else if (this._optionsTab === 'audio') {
+      const audioSec = this._section(doc, 'Sound & Chiptune Mix', 'volume');
+      audioSec.appendChild(
+        this._sliderRow(
+          doc,
+          'Master Volume',
+          0,
+          1,
+          0.05,
+          view.settings.audio.masterVolume,
+          (v) => `${Math.round(v * 100)}%`,
+          (v) => this._actions.onUpdateAudioSettings({ masterVolume: v }),
+        ),
+      );
+      audioSec.appendChild(
+        this._sliderRow(
+          doc,
+          'SFX Volume',
+          0,
+          1,
+          0.05,
+          view.settings.audio.sfxVolume,
+          (v) => `${Math.round(v * 100)}%`,
+          (v) => this._actions.onUpdateAudioSettings({ sfxVolume: v }),
+        ),
+      );
+      audioSec.appendChild(
+        this._sliderRow(
+          doc,
+          'Music Volume',
+          0,
+          1,
+          0.05,
+          view.settings.audio.musicVolume,
+          (v) => `${Math.round(v * 100)}%`,
+          (v) => this._actions.onUpdateAudioSettings({ musicVolume: v }),
+        ),
+      );
+      const muteRow = this._optRow(doc, 'Audio Output', 'Instantly mute or unmute all soundtrack & foley channels');
+      muteRow.appendChild(
+        this._iconBtn(
+          doc,
+          view.settings.audio.muted ? 'Muted' : 'Sound On',
+          view.settings.audio.muted ? 'volumeMute' : 'volume',
+          view.settings.audio.muted ? 'kq-btn kq-btn-sm kq-btn-danger' : 'kq-btn kq-btn-sm kq-btn-active',
+          () => {
+            this._actions.onUpdateAudioSettings({ muted: !view.settings.audio.muted });
+            this._actions.onUiSfx?.('confirm');
+          },
+        ),
+      );
+      audioSec.appendChild(muteRow);
+      scroll.appendChild(audioSec);
+    } else if (this._optionsTab === 'keys') {
+      const bindSec = this._section(doc, 'Keyboard Bindings', 'keyboard');
+      const bindGrid = doc.createElement('div');
+      bindGrid.className = 'kq-bind-grid';
+
+      for (const item of KEYBIND_LABELS) {
+        const row = doc.createElement('div');
+        row.className = 'kq-bind-row';
+
+        const lbl = doc.createElement('span');
+        lbl.textContent = item.label;
+
+        const isListening = this._listeningBindKey === item.key;
+        const code = view.settings.input.bindings[item.key];
+        const bindBtn = this._btn(
+          doc,
+          isListening ? 'Press Key…' : formatKeyCode(code),
+          isListening ? 'kq-btn kq-btn-sm kq-btn-primary' : 'kq-btn kq-btn-sm',
+          () => {
+            this._listeningBindKey = item.key;
+            this._actions.onSetKeyCaptureSuppressed(true);
+            this._actions.onUiSfx?.('tab');
+            this.render(view);
+          },
+        );
+        row.append(lbl, bindBtn);
+        bindGrid.appendChild(row);
+      }
+      bindSec.appendChild(bindGrid);
+
+      const resetRow = doc.createElement('div');
+      resetRow.className = 'kq-opt-row';
+      const note = doc.createElement('span');
+      note.className = 'kq-panel-subheading';
+      note.textContent = 'Arrow keys + WASD and Z/X/C alternates remain active alongside custom keys.';
+      const resetBtn = this._btn(doc, 'Reset Defaults', 'kq-btn kq-btn-sm', () => {
+        this._actions.onUiSfx?.('back');
+        this._actions.onResetKeyBindings();
+      });
+      resetRow.append(note, resetBtn);
+      bindSec.appendChild(resetRow);
+      scroll.appendChild(bindSec);
     }
-    bindSec.appendChild(bindGrid);
 
-    const resetRow = doc.createElement('div');
-    resetRow.className = 'kq-opt-row';
-    const note = doc.createElement('span');
-    note.className = 'kq-panel-subheading';
-    note.textContent = 'Arrow keys + WASD and Z/X/C alternates remain active alongside custom keys.';
-    const resetBtn = this._btn(doc, 'RESET DEFAULTS', 'kq-btn kq-btn-sm', () => this._actions.onResetKeyBindings());
-    resetRow.append(note, resetBtn);
-    bindSec.appendChild(resetRow);
-
-    scroll.appendChild(bindSec);
     panel.appendChild(scroll);
+
+    const footer = doc.createElement('div');
+    footer.className = 'kq-footer-hint';
+    footer.textContent = `Switch tabs with ${stripBrackets(view.glyphs.form)} · Press ${stripBrackets(view.glyphs.pause)} to return`;
+    panel.appendChild(footer);
 
     return panel;
   }
 
   // --------------------------------------------------------------------------
-  // Signpost, Toast & F9 Playtest Drawer
+  // Signpost Dialogue Banner, Toast & F9 Playtest Drawer
   // --------------------------------------------------------------------------
 
   private _renderSignBanner(doc: Document, view: OverlayViewState): void {
@@ -827,16 +1149,22 @@ export class OverlayManager {
       if (this._signBannerEl) {
         this._signBannerEl.remove();
         this._signBannerEl = null;
+        this._signBannerTextEl = null;
       }
       return;
     }
     if (!this._signBannerEl) {
-      this._signBannerEl = doc.createElement('div');
-      this._signBannerEl.className = 'kq-sign-banner';
-      this._root.appendChild(this._signBannerEl);
+      const box = doc.createElement('div');
+      box.className = 'kq-sign-banner';
+      const ic = makeIcon(doc, 'book', 17, 'kq-sign-banner-icon');
+      const txt = doc.createElement('span');
+      box.append(ic, txt);
+      this._root.appendChild(box);
+      this._signBannerEl = box;
+      this._signBannerTextEl = txt;
     }
-    if (this._signBannerEl.textContent !== text) {
-      this._signBannerEl.textContent = text;
+    if (this._signBannerTextEl && this._signBannerTextEl.textContent !== text) {
+      this._signBannerTextEl.textContent = text;
     }
   }
 
@@ -845,16 +1173,23 @@ export class OverlayManager {
       if (this._toastEl) {
         this._toastEl.remove();
         this._toastEl = null;
+        this._toastTextEl = null;
       }
       return;
     }
     if (!this._toastEl) {
-      this._toastEl = doc.createElement('div');
-      this._toastEl.className = 'kq-toast';
-      this._root.appendChild(this._toastEl);
+      const toast = doc.createElement('div');
+      toast.className = 'kq-toast';
+      const ic = makeIcon(doc, 'sparkle', 14);
+      ic.style.color = 'var(--kq-cyan)';
+      const txt = doc.createElement('span');
+      toast.append(ic, txt);
+      this._root.appendChild(toast);
+      this._toastEl = toast;
+      this._toastTextEl = txt;
     }
-    if (this._toastEl.textContent !== view.toastMessage) {
-      this._toastEl.textContent = view.toastMessage;
+    if (this._toastTextEl && this._toastTextEl.textContent !== view.toastMessage) {
+      this._toastTextEl.textContent = view.toastMessage;
     }
   }
 
@@ -886,7 +1221,8 @@ export class OverlayManager {
     header.className = 'kq-drawer-header';
     const title = doc.createElement('span');
     title.textContent = 'F9 PLAYTEST DRAWER';
-    const closeBtn = this._btn(doc, '✕', 'kq-btn kq-btn-sm', () => this.togglePlaytestDrawer(false));
+    const closeBtn = this._iconBtn(doc, '', 'close', 'kq-btn kq-btn-xs', () => this.togglePlaytestDrawer(false));
+    closeBtn.setAttribute('aria-label', 'Close Playtest Drawer');
     header.append(title, closeBtn);
     drawer.appendChild(header);
 
@@ -896,7 +1232,6 @@ export class OverlayManager {
     drawer.appendChild(stats);
     this._updateDrawerTelemetry(view);
 
-    // Compact DEVICE QA Row calling window.__KRUNKED_DEBUG__
     const qaBox = doc.createElement('div');
     qaBox.className = 'kq-drawer-qa';
 
@@ -913,7 +1248,6 @@ export class OverlayManager {
       }
     });
     clearPadBtn.setAttribute('data-qa-device', 'clear_gamepad');
-    clearPadBtn.title = 'Clear virtual gamepad override';
     qaHead.append(qaTitle, clearPadBtn);
     qaBox.appendChild(qaHead);
 
@@ -989,7 +1323,6 @@ export class OverlayManager {
     drawer.appendChild(qaBox);
     this._syncDeviceQaButtons(view);
 
-    // Room Warp Selector
     const warpRow = doc.createElement('div');
     warpRow.className = 'kq-drawer-row';
     const roomSelect = doc.createElement('select');
@@ -1005,13 +1338,12 @@ export class OverlayManager {
     roomSelect.addEventListener('change', () => {
       this._selectedWarpRoom = roomSelect.value;
     });
-    const warpBtn = this._btn(doc, 'WARP', 'kq-btn kq-btn-sm kq-btn-primary', () => {
+    const warpBtn = this._btn(doc, 'WARP', 'kq-btn kq-btn-xs kq-btn-primary', () => {
       this._actions.onWarpRoom(roomSelect.value);
     });
     warpRow.append(roomSelect, warpBtn);
     drawer.appendChild(warpRow);
 
-    // Form Switcher
     const formGrid = doc.createElement('div');
     formGrid.className = 'kq-drawer-grid';
     for (const f of HERO_FORMS) {
@@ -1019,25 +1351,23 @@ export class OverlayManager {
         this._btn(
           doc,
           FORM_SHORT_LABELS[f],
-          view.simState.hero.form === f ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+          view.simState.hero.form === f ? 'kq-btn kq-btn-xs kq-btn-active' : 'kq-btn kq-btn-xs',
           () => this._actions.onSetForm(f),
         ),
       );
     }
     drawer.appendChild(formGrid);
 
-    // Quick Action Grid
     const actionsGrid = doc.createElement('div');
     actionsGrid.className = 'kq-drawer-grid-2';
-    actionsGrid.appendChild(this._btn(doc, 'UNLOCK FORMS', 'kq-btn kq-btn-sm', () => this._actions.onUnlockAllForms()));
-    actionsGrid.appendChild(this._btn(doc, '+5000 ◆', 'kq-btn kq-btn-sm', () => this._actions.onGrantCrystals(5000)));
-    actionsGrid.appendChild(this._btn(doc, 'HEAL FULL', 'kq-btn kq-btn-sm', () => this._actions.onHealFull()));
+    actionsGrid.appendChild(this._btn(doc, 'UNLOCK FORMS', 'kq-btn kq-btn-xs', () => this._actions.onUnlockAllForms()));
+    actionsGrid.appendChild(this._btn(doc, '+5000 ◆', 'kq-btn kq-btn-xs', () => this._actions.onGrantCrystals(5000)));
+    actionsGrid.appendChild(this._btn(doc, 'HEAL FULL', 'kq-btn kq-btn-xs', () => this._actions.onHealFull()));
     actionsGrid.appendChild(
-      this._btn(doc, 'KILL ENEMIES', 'kq-btn kq-btn-sm kq-btn-danger', () => this._actions.onKillRoomEnemies()),
+      this._btn(doc, 'KILL ENEMIES', 'kq-btn kq-btn-xs kq-btn-danger', () => this._actions.onKillRoomEnemies()),
     );
     drawer.appendChild(actionsGrid);
 
-    // Boss Launcher
     const bossRow = doc.createElement('div');
     bossRow.className = 'kq-drawer-row';
     const bossSelect = doc.createElement('select');
@@ -1052,20 +1382,19 @@ export class OverlayManager {
     bossSelect.addEventListener('change', () => {
       this._selectedBossId = bossSelect.value as BossId;
     });
-    const bossBtn = this._btn(doc, 'BOSS', 'kq-btn kq-btn-sm kq-btn-accent', () => {
+    const bossBtn = this._btn(doc, 'BOSS', 'kq-btn kq-btn-xs kq-btn-accent', () => {
       this._actions.onChallengeBoss(bossSelect.value as BossId);
     });
     bossRow.append(bossSelect, bossBtn);
     drawer.appendChild(bossRow);
 
-    // Quick Toggles: FPS, Touch, Custom Pack, Save
     const toggleGrid = doc.createElement('div');
     toggleGrid.className = 'kq-drawer-grid-2';
 
     const nextFps: FpsLimitOption =
       view.settings.render.fpsLimit === 30 ? 60 : view.settings.render.fpsLimit === 60 ? 120 : 30;
     toggleGrid.appendChild(
-      this._btn(doc, `FPS: ${view.settings.render.fpsLimit}`, 'kq-btn kq-btn-sm', () => {
+      this._btn(doc, `FPS: ${view.settings.render.fpsLimit}`, 'kq-btn kq-btn-xs', () => {
         this._actions.onUpdateRenderSettings({ fpsLimit: nextFps });
       }),
     );
@@ -1077,7 +1406,7 @@ export class OverlayManager {
           ? 'off'
           : 'auto';
     toggleGrid.appendChild(
-      this._btn(doc, `TOUCH: ${view.settings.input.touchMode}`, 'kq-btn kq-btn-sm', () => {
+      this._btn(doc, `TOUCH: ${view.settings.input.touchMode}`, 'kq-btn kq-btn-xs', () => {
         this._actions.onUpdateInputSettings({ touchMode: nextTouch });
       }),
     );
@@ -1086,14 +1415,14 @@ export class OverlayManager {
       this._btn(
         doc,
         view.customPackEnabled ? 'PACK: CUSTOM' : 'PACK: BUILTIN',
-        view.customPackEnabled ? 'kq-btn kq-btn-sm kq-btn-active' : 'kq-btn kq-btn-sm',
+        view.customPackEnabled ? 'kq-btn kq-btn-xs kq-btn-active' : 'kq-btn kq-btn-xs',
         () => {
           this._actions.onToggleCustomPack(!view.customPackEnabled);
         },
       ),
     );
 
-    toggleGrid.appendChild(this._btn(doc, 'SAVE NOW', 'kq-btn kq-btn-sm', () => this._actions.onForceSave()));
+    toggleGrid.appendChild(this._btn(doc, 'SAVE NOW', 'kq-btn kq-btn-xs', () => this._actions.onForceSave()));
     drawer.appendChild(toggleGrid);
 
     this._root.appendChild(drawer);
@@ -1137,7 +1466,7 @@ export class OverlayManager {
   }
 
   // --------------------------------------------------------------------------
-  // DOM Helpers
+  // DOM Builders
   // --------------------------------------------------------------------------
 
   private _btn(doc: Document, label: string, className: string, onClick: () => void): HTMLButtonElement {
@@ -1149,23 +1478,72 @@ export class OverlayManager {
     return b;
   }
 
-  private _section(doc: Document, titleText: string): HTMLElement {
+  private _iconBtn(
+    doc: Document,
+    label: string,
+    icon: IconName,
+    className: string,
+    onClick: () => void,
+  ): HTMLButtonElement {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = className;
+    b.appendChild(makeIcon(doc, icon, 14));
+    if (label) {
+      b.appendChild(doc.createTextNode(label));
+    }
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  private _menuBtn(
+    doc: Document,
+    label: string,
+    icon: IconName,
+    className: string,
+    onClick: () => void,
+  ): HTMLButtonElement {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = className;
+
+    const left = doc.createElement('span');
+    left.className = 'kq-btn-menu-left';
+    left.append(makeIcon(doc, icon, 16), doc.createTextNode(label));
+
+    const arrow = makeIcon(doc, 'chevronRight', 15, 'kq-btn-menu-arrow');
+    b.append(left, arrow);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  private _section(doc: Document, titleText: string, icon?: IconName): HTMLElement {
     const sec = doc.createElement('section');
     sec.className = 'kq-section';
     const title = doc.createElement('div');
     title.className = 'kq-section-title';
-    title.textContent = titleText;
+    if (icon) title.appendChild(makeIcon(doc, icon, 14));
+    title.appendChild(doc.createTextNode(titleText));
     sec.appendChild(title);
     return sec;
   }
 
-  private _optRow(doc: Document, labelText: string): HTMLElement {
+  private _optRow(doc: Document, labelText: string, hintText?: string): HTMLElement {
     const row = doc.createElement('div');
     row.className = 'kq-opt-row';
+    const wrap = doc.createElement('div');
+    wrap.className = 'kq-opt-label-wrap';
     const lbl = doc.createElement('span');
     lbl.className = 'kq-opt-label';
     lbl.textContent = labelText;
-    row.appendChild(lbl);
+    wrap.appendChild(lbl);
+    if (hintText) {
+      const hint = doc.createElement('span');
+      hint.className = 'kq-opt-hint';
+      hint.textContent = hintText;
+      wrap.appendChild(hint);
+    }
+    row.appendChild(wrap);
     return row;
   }
 
@@ -1190,6 +1568,7 @@ export class OverlayManager {
     input.max = String(max);
     input.step = String(step);
     input.value = String(value);
+    setSliderFill(input, value, min, max);
 
     const valSpan = doc.createElement('span');
     valSpan.className = 'kq-slider-val';
@@ -1198,6 +1577,7 @@ export class OverlayManager {
     input.addEventListener('input', () => {
       const num = Number(input.value);
       if (Number.isFinite(num)) {
+        setSliderFill(input, num, min, max);
         valSpan.textContent = format(num);
         onChange(num);
       }

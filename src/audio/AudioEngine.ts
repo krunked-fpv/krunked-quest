@@ -124,6 +124,11 @@ export class AudioEngine implements IAudioEngine {
     this.synth.updateSettings(settings);
   }
 
+  public playUiSfx(kind: 'move' | 'confirm' | 'back' | 'tab' | 'error'): void {
+    if (this.disposed) return;
+    this.synth.playUiSfx(kind);
+  }
+
   public getSettings(): AudioSettings {
     return this.synth.getSettings();
   }

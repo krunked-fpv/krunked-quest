@@ -1031,7 +1031,7 @@ export class TileRenderer {
       ctx.fillRect(cx - 1, sy - 3, 2, 2);
 
       if (ex.label) {
-        font.draw(ctx, ex.label, cx, Math.max(26, sy - 17), 'gold', 1, 'center', true);
+        this.drawHudSafeWorldLabel(ctx, font, ex.label, cx, sy - 17, 'gold');
       }
     }
 
@@ -1139,6 +1139,69 @@ export class TileRenderer {
     return false;
   }
 
+  /**
+   * Draws a crisp floating world label while strictly respecting top-left / top-right HUD safe zones
+   * so world labels (e.g., Hub animal houses like GEAR OWL) NEVER overlap Coins, Crystals, Hearts, or Minimap.
+   */
+  private drawHudSafeWorldLabel(
+    ctx: CanvasRenderingContext2D,
+    font: PixelFont,
+    text: string,
+    sx: number,
+    rawY: number,
+    color: 'white' | 'gold' | 'cyan' | 'magenta' | 'green' | 'red' | 'orange' | 'yellow' | 'dim' | 'cream',
+  ): void {
+    const labelY = Math.round(rawY);
+    if (labelY < 10 || labelY > VIEWPORT_H - 12) return;
+    // Top-left HUD safe zone (combo wheel, hearts, form badge)
+    if (sx < 185 && labelY < 54) return;
+    // Top-right HUD safe zone (crystal/coin pill & minimap)
+    if (sx > VIEWPORT_W - 190 && labelY < 50) return;
+    font.draw(ctx, text, sx, labelY, color, 1, 'center', true);
+  }
+
+  private drawInteractPill(
+    ctx: CanvasRenderingContext2D,
+    font: PixelFont,
+    text: string,
+    sx: number,
+    rawY: number,
+    borderColor: string,
+    textColor: 'gold' | 'cyan' | 'cream',
+  ): void {
+    const tw = font.measure(text, 1);
+    const px = Math.round(sx - tw * 0.5 - 5);
+    const py = Math.max(48, Math.round(rawY));
+    ctx.fillStyle = OUTLINE_DARK;
+    ctx.fillRect(px - 1, py - 1, tw + 12, 13);
+    ctx.fillStyle = borderColor;
+    ctx.fillRect(px, py, tw + 10, 11);
+    ctx.fillStyle = UI_COLORS.panelBg;
+    ctx.fillRect(px + 1, py + 1, tw + 8, 9);
+    font.draw(ctx, text, sx, py + 2, textColor, 1, 'center', false);
+  }
+
+  private drawSoftPixelHalo(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    rx: number,
+    ry: number,
+    color: string,
+    alpha: number,
+  ): void {
+    const prevAlpha = ctx.globalAlpha;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha * 0.45;
+    ctx.fillRect(cx - rx, cy - ry + 2, rx * 2, ry * 2 - 4);
+    ctx.fillRect(cx - rx + 2, cy - ry, rx * 2 - 4, ry * 2);
+    ctx.globalAlpha = alpha;
+    const irx = rx >> 1;
+    const iry = ry >> 1;
+    ctx.fillRect(cx - irx, cy - iry, irx * 2, iry * 2);
+    ctx.globalAlpha = prevAlpha;
+  }
+
   private renderProp(
     ctx: CanvasRenderingContext2D,
     prop: InteractivePropDef,
@@ -1154,11 +1217,13 @@ export class TileRenderer {
     font: PixelFont,
     glyphs: DeviceGlyphMap,
   ): void {
+    const heroCx = state.hero.x + state.hero.width * 0.5;
+    const heroCy = state.hero.y + state.hero.height * 0.5;
+    const propDist = Math.hypot(heroCx - (prop.x + (prop.width ?? 1) * 0.5), heroCy - (prop.y + (prop.height ?? 1) * 0.5));
+
     switch (prop.kind) {
       case 'shop_npc': {
         const shopId = prop.shopId ?? 'codex';
-        // Cap oversized Guardians (e.g. 128px Barnaby / 98px Barnacle) to 80px preserving aspect ratio
-        // so they stand imposing without spearing through overhead Hub terraces or colliding with labels.
         let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1181,7 +1246,6 @@ export class TileRenderer {
           }
         }
 
-        // Dynamic NPC floating name + interact speech pill anchored cleanly above actual rendered head
         const isActive = state.activeShopPrompt === shopId;
         const shortName = NPC_DISPLAY_NAMES[shopId];
         const headClearY = syBase - Math.max(36, drawnH);
@@ -1189,24 +1253,16 @@ export class TileRenderer {
           const bob = Math.round(Math.sin(timeSec * 6) * 2);
           const keyBadge = glyphs.interact.startsWith('[') ? glyphs.interact : `[${glyphs.interact}]`;
           const pillText = `${keyBadge} ${prop.label ?? shortName}`;
-          const tw = font.measure(pillText, 1);
-          const px = Math.round(sx - tw * 0.5 - 5);
-          const py = Math.max(26, headClearY - 16) + bob;
-          ctx.fillStyle = OUTLINE_DARK;
-          ctx.fillRect(px - 1, py - 1, tw + 12, 13);
-          ctx.fillStyle = UI_COLORS.frameGold;
-          ctx.fillRect(px, py, tw + 10, 11);
-          ctx.fillStyle = UI_COLORS.panelBg;
-          ctx.fillRect(px + 1, py + 1, tw + 8, 9);
-          font.draw(ctx, pillText, sx, py + 2, 'gold', 1, 'center', false);
+          this.drawInteractPill(ctx, font, pillText, sx, headClearY - 16 + bob, UI_COLORS.frameGold, 'gold');
         } else {
-          font.draw(ctx, shortName, sx, Math.max(26, headClearY - 9), 'cream', 1, 'center', true);
+          this.drawHudSafeWorldLabel(ctx, font, shortName, sx, headClearY - 9, 'cream');
         }
         break;
       }
 
       case 'volt_node': {
         const hover = Math.round(Math.sin(timeSec * 5 + prop.x) * 2);
+        this.drawSoftPixelHalo(ctx, sx, syBase - 16 + hover, 14, 14, '#56ecff', 0.16);
         const drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1224,7 +1280,6 @@ export class TileRenderer {
             ctx.drawImage(spr, anim2 * 32, 0, 32, 32, sx - 16, syBase - 32 + hover, 32, 32);
           }
         }
-        // Subtle electric range ring cue when hero is in Volt form
         if (state.hero.form === 'krunk_electric') {
           ctx.fillStyle = anim2 === 0 ? '#66f7ff' : '#f2ff38';
           const cx = sx;
@@ -1239,6 +1294,8 @@ export class TileRenderer {
 
       case 'form_totem': {
         const form = prop.formId ?? 'krunk_basic';
+        const pal = HERO_FORM_PALETTES[form];
+        this.drawSoftPixelHalo(ctx, sx, syBase - 22, 16, 20, pal[0], 0.15 + 0.05 * Math.sin(timeSec * 3.5));
         let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1259,19 +1316,25 @@ export class TileRenderer {
           }
           drawnH = 44;
         }
-        const pal = HERO_FORM_PALETTES[form];
         const pulse = Math.round(Math.sin(timeSec * 4 + prop.x) * 3);
         ctx.fillStyle = pal[4];
         ctx.fillRect(sx - 12, syBase - 34 + pulse, 2, 2);
         ctx.fillRect(sx + 10, syBase - 30 - pulse, 2, 2);
-        if (prop.label) {
-          font.draw(ctx, prop.label, sx, syBase - Math.max(44, drawnH) - 10, 'cyan', 1, 'center', true);
+        if (propDist <= 1.7 && state.hero.form !== form) {
+          const bob = Math.round(Math.sin(timeSec * 6) * 2);
+          const keyBadge = glyphs.interact.startsWith('[') ? glyphs.interact : `[${glyphs.interact}]`;
+          this.drawInteractPill(ctx, font, `${keyBadge} ${prop.label ?? 'SWITCH FORM'}`, sx, syBase - Math.max(44, drawnH) - 16 + bob, pal[0], 'cyan');
+        } else if (prop.label) {
+          this.drawHudSafeWorldLabel(ctx, font, prop.label, sx, syBase - Math.max(44, drawnH) - 10, 'cyan');
         }
         break;
       }
 
       case 'chest': {
         const opened = state.progress.openedChests.includes(prop.id);
+        if (!opened) {
+          this.drawSoftPixelHalo(ctx, sx, syBase - 14, 14, 12, '#ffd84d', 0.14 + 0.05 * Math.sin(timeSec * 4));
+        }
         const drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1297,6 +1360,7 @@ export class TileRenderer {
 
       case 'teleporter': {
         const unlocked = state.progress.unlockedTeleporters.includes(state.roomId);
+        this.drawSoftPixelHalo(ctx, sx, syBase - 26, 20, 24, unlocked ? '#56ecff' : '#9e8cbd', unlocked ? 0.17 + 0.05 * Math.sin(timeSec * 3.8) : 0.08);
         const lowCeiling = this.hasOverheadCeiling(room, prop.x, prop.y, 4);
         let drawnH = this.drawCustomFramedProp(
           ctx,
@@ -1317,21 +1381,20 @@ export class TileRenderer {
           }
           drawnH = 48;
         }
-        font.draw(
-          ctx,
-          unlocked ? 'WARP' : 'PORTAL',
-          sx,
-          Math.max(26, syBase - Math.max(44, drawnH) - 9),
-          unlocked ? 'cyan' : 'dim',
-          1,
-          'center',
-          true,
-        );
+        const labelTop = syBase - Math.max(44, drawnH);
+        if (unlocked && propDist <= 1.9) {
+          const bob = Math.round(Math.sin(timeSec * 6) * 2);
+          const mapBadge = glyphs.map.startsWith('[') ? glyphs.map : `[${glyphs.map}]`;
+          this.drawInteractPill(ctx, font, `${mapBadge} FAST TRAVEL`, sx, labelTop - 15 + bob, '#56ecff', 'cyan');
+        } else {
+          this.drawHudSafeWorldLabel(ctx, font, unlocked ? 'WARP' : 'PORTAL', sx, labelTop - 9, unlocked ? 'cyan' : 'dim');
+        }
         break;
       }
 
       case 'save_shrine': {
-        const drawnH = this.drawCustomFramedProp(
+        this.drawSoftPixelHalo(ctx, sx, syBase - 20, 15, 18, '#ffd84d', 0.15 + 0.05 * Math.sin(timeSec * 3.2));
+        let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
           'tile/save_shrine',
@@ -1346,6 +1409,12 @@ export class TileRenderer {
           if (spr) {
             ctx.drawImage(spr, anim2 * 32, 0, 32, 40, sx - 16, syBase - 40, 32, 40);
           }
+          drawnH = 40;
+        }
+        if (propDist <= 1.8) {
+          const bob = Math.round(Math.sin(timeSec * 6) * 2);
+          const keyBadge = glyphs.interact.startsWith('[') ? glyphs.interact : `[${glyphs.interact}]`;
+          this.drawInteractPill(ctx, font, `${keyBadge} REST & HEAL`, sx, syBase - Math.max(40, drawnH) - 15 + bob, UI_COLORS.frameGold, 'gold');
         }
         break;
       }
@@ -1371,7 +1440,6 @@ export class TileRenderer {
       }
 
       case 'animal_house': {
-        // Cap animal house height cleanly to <= 64px (aspect-preserved) so it sits cleanly between Hub terraces with visible label
         let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1393,15 +1461,13 @@ export class TileRenderer {
         }
         if (prop.animalName) {
           const rescued = state.progress.rescuedAnimals.includes(prop.animalName);
-          font.draw(
+          this.drawHudSafeWorldLabel(
             ctx,
+            font,
             prop.animalName,
             sx,
-            Math.max(26, syBase - Math.max(44, drawnH) - 9),
+            syBase - Math.max(44, drawnH) - 9,
             rescued ? 'green' : 'dim',
-            1,
-            'center',
-            true,
           );
         }
         break;

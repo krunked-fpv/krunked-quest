@@ -687,6 +687,41 @@ describe('Hero Core Physics Feel', () => {
     }
     expect(featherVy).toBeCloseTo(18.0 * PHYSICS.MAGIC_FEATHER_MULT, 1);
   });
+
+  it('supports Down + Jump drop-through on OneWay platforms without dropping through solid ground', () => {
+    const room = makeRoom('oneway_drop', [
+      '##############',
+      '#............#',
+      '#............#',
+      '#...------...#',
+      '#............#',
+      '#............#',
+      '##############',
+    ], { defaultSpawnX: 5, defaultSpawnY: 4.0 });
+    const catalog = makeTestCatalog([room]);
+    const engine = createSimEngine();
+    const state = engine.createInitialState(catalog);
+
+    // Settle on OneWay platform at ty = 3 (top = 4.0)
+    state.hero.y = 4.05;
+    stepN(engine, state, catalog, 6);
+    expect(state.hero.grounded).toBe(true);
+    expect(state.hero.y).toBeCloseTo(4.0, 2);
+
+    // Down + Jump drops cleanly through the OneWay platform down to solid floor y = 1.0
+    stepN(engine, state, catalog, 1, () => ({ moveY: -1, jumpPressed: true, jumpHeld: true }));
+    expect(state.hero.oneWayDropTimer).toBeGreaterThan(0);
+    expect(state.hero.grounded).toBe(false);
+    stepN(engine, state, catalog, 35);
+    expect(state.hero.grounded).toBe(true);
+    expect(state.hero.y).toBeCloseTo(1.0, 2);
+
+    // Down + Jump on solid ground MUST perform a normal jump upward, never drop through!
+    const jumpEv = stepN(engine, state, catalog, 1, () => ({ moveY: -1, jumpPressed: true, jumpHeld: true }));
+    expect(jumpEv.some((e) => e.type === 'jump' && !e.air)).toBe(true);
+    expect(state.hero.vy).toBeGreaterThan(0);
+    expect(state.hero.y).toBeGreaterThanOrEqual(1.0);
+  });
 });
 
 // ============================================================================

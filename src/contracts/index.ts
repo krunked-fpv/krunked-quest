@@ -614,6 +614,7 @@ export interface HeroState {
   wallSalivaActive: boolean;
   wallSalivaTopY: number;
   fireImmunityTimer: number;
+  oneWayDropTimer: number;
 }
 
 export interface EnemyRuntime {
@@ -1075,6 +1076,7 @@ export interface IAudioEngine {
   unlock(): void;
   consumeEvents(events: readonly SimEvent[], biome: BiomeId, inBoss: boolean): void;
   setMusicContext(context: BiomeId | 'TITLE' | 'BOSS' | 'MINIBOSS' | 'SHADOW_DUEL' | 'FINAL_BOSS' | 'VICTORY'): void;
+  playUiSfx?(kind: 'move' | 'confirm' | 'back' | 'tab' | 'error'): void;
   updateSettings(settings: AudioSettings): void;
   getSettings(): AudioSettings;
   dispose(): void;

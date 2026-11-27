@@ -9,6 +9,7 @@ import {
   type ShopId,
   type UpgradeDef,
 } from '../contracts/index.js';
+import { makeIcon, type IconName } from './icons.js';
 import type { OverlayActions, OverlayViewState } from './OverlayManager.js';
 
 interface ShopTheme {
@@ -18,6 +19,7 @@ interface ShopTheme {
   readonly greeting: string;
   readonly accent: string;
   readonly badge: string;
+  readonly icon: IconName;
 }
 
 const SHOP_THEMES: Readonly<Record<ShopId, ShopTheme>> = {
@@ -27,47 +29,53 @@ const SHOP_THEMES: Readonly<Record<ShopId, ShopTheme>> = {
     subtitle: 'Forge extra Heart Orbs, Relic Sockets, and Iron Skin',
     greeting: '"Bring me shimmering crystals and I will temper your spirit for the trials ahead."',
     accent: '#c06bff',
-    badge: 'CORE FORGE',
+    badge: 'Core Forge',
+    icon: 'heart',
   },
   orla: {
     npcName: 'Orla',
     roleTitle: 'Form Master & Cartographer',
     subtitle: 'Evolve Elemental Form arts and unveil the World Map',
     greeting: '"Every form holds dormant secrets — and a wise traveler maps every hidden exit."',
-    accent: '#58e882',
-    badge: 'FORM & MAP',
+    accent: '#52e88a',
+    badge: 'Form & Map',
+    icon: 'compass',
   },
   barnaby: {
     npcName: 'Barnaby',
     roleTitle: 'Relic Bazaar Curio Dealer',
     subtitle: 'Collect 16 mystical Relics and customize your active slots',
     greeting: '"Finest charms in Subrosa Haven! Buy once, swap freely whenever you visit."',
-    accent: '#ffd644',
-    badge: '16 RELICS',
+    accent: '#ffd84d',
+    badge: '16 Relics',
+    icon: 'trophy',
   },
   garron: {
     npcName: 'Garron',
     roleTitle: 'Arena & Boss Rematch Master',
     subtitle: 'Test your combos against all 8 Guardians & Mini-Bosses',
     greeting: '"Step into the ring, champion! Every Guardian waits for a true challenger."',
-    accent: '#ff5468',
-    badge: '8 BOSS RUSH',
+    accent: '#ff546e',
+    badge: '8 Boss Rush',
+    icon: 'swords',
   },
   barnacle: {
     npcName: 'Captain Barnacle',
-    roleTitle: 'Ghost Ship Endless Quartermaster',
+    roleTitle: 'Ghost Ship Quartermaster',
     subtitle: 'Board the cursed galleon for escalating wave survival',
     greeting: '"Three tiers of phantom fury await on deck. Hold your combo or walk the plank!"',
-    accent: '#57e6ff',
-    badge: 'ENDLESS DOCK',
+    accent: '#56ecff',
+    badge: 'Endless Dock',
+    icon: 'anchor',
   },
   codex: {
     npcName: 'Codex',
     roleTitle: 'Adventurer Guide Tome',
     subtitle: 'Live controls, Elemental Form arts, and Combo-Heal doctrine',
     greeting: '"Knowledge sharpens speed. Consult this tome whenever switching devices or forms."',
-    accent: '#ff70c8',
-    badge: 'GUIDE TOME',
+    accent: '#ff55b8',
+    badge: 'Guide Tome',
+    icon: 'book',
   },
 };
 
@@ -97,42 +105,45 @@ const GHOST_SHIP_TIERS: ReadonlyArray<{
   color: string;
 }> = [
   {
-    tier: 'TIER 1',
-    waves: 'WAVES 1–3',
+    tier: 'Tier 1',
+    waves: 'Waves 1–3',
     title: 'Spectral Boarding',
     detail: 'Phantom crows, owls, and raiders patrol the three-deck galleon. Build early combo heals.',
-    color: '#58e882',
+    color: '#52e88a',
   },
   {
-    tier: 'TIER 2',
-    waves: 'WAVES 4–7',
+    tier: 'Tier 2',
+    waves: 'Waves 4–7',
     title: 'Cursed Gale & Deck Spikes',
     detail: 'Periodic cursed spike eruptions sweep the lower deck while airborne swarms intensify.',
-    color: '#ffd644',
+    color: '#ffd84d',
   },
   {
-    tier: 'TIER 3',
-    waves: 'WAVES 8+',
+    tier: 'Tier 3',
+    waves: 'Waves 8+',
     title: 'Abyssal Maelstrom',
     detail: 'Relentless elite waves, rapid spike cycles, and peak score multipliers for true veterans.',
-    color: '#ff5468',
+    color: '#ff546e',
   },
 ];
+
+type RelicFilter = 'all' | 'owned' | 'equipped';
+let activeRelicFilter: RelicFilter = 'all';
 
 function formatDeviceBadge(device: InputDeviceMode): string {
   switch (device) {
     case 'keyboard':
-      return 'KEYBOARD';
+      return 'Keyboard';
     case 'gamepad_xbox':
-      return 'XBOX CONTROLLER';
+      return 'Xbox Controller';
     case 'gamepad_ps':
-      return 'PLAYSTATION CONTROLLER';
+      return 'PlayStation Controller';
     case 'gamepad_switch':
-      return 'SWITCH CONTROLLER';
+      return 'Switch Controller';
     case 'gamepad_tesla':
-      return 'TESLA / IN-CAR PAD';
+      return 'Tesla / In-Car Pad';
     case 'touch':
-      return 'AUTO-TOUCH CONTROLS';
+      return 'Auto-Touch Controls';
   }
 }
 
@@ -141,21 +152,24 @@ function makeButton(
   label: string,
   className: string,
   onClick: () => void,
+  icon?: IconName,
 ): HTMLButtonElement {
   const b = doc.createElement('button');
   b.type = 'button';
   b.className = className;
-  b.textContent = label;
+  if (icon) b.appendChild(makeIcon(doc, icon, 13));
+  b.appendChild(doc.createTextNode(label));
   b.addEventListener('click', onClick);
   return b;
 }
 
-function makeSection(doc: Document, titleText: string): HTMLElement {
+function makeSection(doc: Document, titleText: string, icon?: IconName): HTMLElement {
   const sec = doc.createElement('section');
   sec.className = 'kq-section';
   const title = doc.createElement('div');
   title.className = 'kq-section-title';
-  title.textContent = titleText;
+  if (icon) title.appendChild(makeIcon(doc, icon, 14));
+  title.appendChild(doc.createTextNode(titleText));
   sec.appendChild(title);
   return sec;
 }
@@ -220,15 +234,14 @@ function renderUpgradeCard(
 
   const lvlBadge = doc.createElement('span');
   lvlBadge.className = maxed ? 'kq-badge kq-badge-active' : 'kq-badge';
-  lvlBadge.textContent = maxed ? 'MAXED' : `LV ${curLevel}/${upg.maxLevel}`;
+  lvlBadge.textContent = maxed ? 'Maxed' : `Lv ${curLevel}/${upg.maxLevel}`;
   titleRow.appendChild(lvlBadge);
 
   if (showFormTag && upg.requiredForm) {
     const fBadge = doc.createElement('span');
     fBadge.className = formLocked ? 'kq-badge kq-badge-danger' : 'kq-badge kq-badge-ready';
-    fBadge.textContent = formLocked
-      ? `🔒 ${FORM_DISPLAY_NAMES[upg.requiredForm]}`
-      : FORM_DISPLAY_NAMES[upg.requiredForm];
+    if (formLocked) fBadge.appendChild(makeIcon(doc, 'lock', 11));
+    fBadge.appendChild(doc.createTextNode(FORM_DISPLAY_NAMES[upg.requiredForm]));
     titleRow.appendChild(fBadge);
   }
 
@@ -240,27 +253,31 @@ function renderUpgradeCard(
   const actionWrap = doc.createElement('div');
   actionWrap.className = 'kq-card-action';
 
-  const btnLabel = maxed
-    ? '✓ MAXED'
-    : formLocked
-      ? '🔒 LOCKED'
-      : `BUY ${price}◆`;
+  const btnIcon: IconName = maxed ? 'check' : formLocked ? 'lock' : 'crystal';
+  const btnLabel = maxed ? 'Maxed' : formLocked ? 'Locked' : `${price}`;
   const btnCls = maxed
     ? 'kq-btn kq-btn-sm kq-btn-active'
     : !formLocked && canAfford
       ? 'kq-btn kq-btn-sm kq-btn-primary'
       : 'kq-btn kq-btn-sm';
 
-  const buyBtn = makeButton(doc, btnLabel, btnCls, () => {
-    actions.onBuyUpgrade(upg.key);
-  });
+  const buyBtn = makeButton(
+    doc,
+    btnLabel,
+    btnCls,
+    () => {
+      const ok = actions.onBuyUpgrade(upg.key);
+      actions.onUiSfx?.(ok ? 'confirm' : 'error');
+    },
+    btnIcon,
+  );
   buyBtn.disabled = maxed || formLocked || !canAfford;
   actionWrap.appendChild(buyBtn);
 
   if (!maxed && !formLocked && !canAfford) {
     const need = doc.createElement('div');
     need.className = 'kq-afford-hint';
-    need.textContent = `NEED ${price - view.simState.progress.crystals}◆`;
+    need.textContent = `Need ${price - view.simState.progress.crystals} more`;
     actionWrap.appendChild(need);
   }
 
@@ -272,7 +289,6 @@ function buildVesperaBody(doc: Document, view: OverlayViewState, actions: Overla
   const wrap = doc.createElement('div');
   wrap.className = 'kq-shop-body';
 
-  // Current vital stats summary bar
   const extraLife = view.simState.progress.upgradeLevels.ExtraLife ?? 0;
   const itemSlot = view.simState.progress.upgradeLevels.ItemSlot ?? 0;
   const ironSkin = view.simState.progress.upgradeLevels.IronSkin ?? 0;
@@ -282,7 +298,7 @@ function buildVesperaBody(doc: Document, view: OverlayViewState, actions: Overla
   summary.append(
     makeStatItem(doc, 'Max Heart Orbs', `${view.simState.hero.maxHp} (Vital +${extraLife}/5)`),
     makeStatItem(doc, 'Relic Slots', `${1 + itemSlot} / 3`),
-    makeStatItem(doc, 'Iron Skin', ironSkin > 0 ? 'ACTIVE (+25% INVULN)' : 'NOT FORGED'),
+    makeStatItem(doc, 'Iron Skin', ironSkin > 0 ? 'Active (+25% Invuln)' : 'Not Forged'),
   );
   wrap.appendChild(summary);
 
@@ -303,7 +319,6 @@ function buildOrlaBody(doc: Document, view: OverlayViewState, actions: OverlayAc
   const orlaUpgrades = view.catalog.upgrades.filter((u) => u.shop === 'orla');
   const mapUpgrades = orlaUpgrades.filter((u) => !u.requiredForm);
 
-  // Group form upgrades in canonical HERO_FORMS order
   for (const formId of HERO_FORMS) {
     const groupItems = orlaUpgrades.filter((u) => u.requiredForm === formId);
     if (groupItems.length === 0) continue;
@@ -330,7 +345,10 @@ function buildOrlaBody(doc: Document, view: OverlayViewState, actions: OverlayAc
 
     const statusBadge = doc.createElement('span');
     statusBadge.className = unlocked ? 'kq-badge kq-badge-active' : 'kq-badge kq-badge-danger';
-    statusBadge.textContent = unlocked ? 'FORM UNLOCKED' : `🔒 LOCKED — ${FORM_UNLOCK_HINTS[formId]}`;
+    statusBadge.append(
+      makeIcon(doc, unlocked ? 'check' : 'lock', 11),
+      doc.createTextNode(unlocked ? 'Form Unlocked' : `Locked — ${FORM_UNLOCK_HINTS[formId]}`),
+    );
 
     secHead.append(left, statusBadge);
     sec.appendChild(secHead);
@@ -344,9 +362,8 @@ function buildOrlaBody(doc: Document, view: OverlayViewState, actions: OverlayAc
     wrap.appendChild(sec);
   }
 
-  // Cartography & Map Upgrades group
   if (mapUpgrades.length > 0) {
-    const mapSec = makeSection(doc, 'Cartography & World Map Tools');
+    const mapSec = makeSection(doc, 'Cartography & World Map Tools', 'map');
     const list = doc.createElement('div');
     list.className = 'kq-card-list';
     for (const upg of mapUpgrades) {
@@ -367,7 +384,6 @@ function buildBarnabyBody(doc: Document, view: OverlayViewState, actions: Overla
   const equippedIds = view.simState.progress.equippedRelics;
   const ownedIds = view.simState.progress.ownedRelics;
 
-  // Visual Active Relic Slot Bar
   const slotSection = doc.createElement('section');
   slotSection.className = 'kq-section kq-relic-slot-bar';
 
@@ -375,11 +391,14 @@ function buildBarnabyBody(doc: Document, view: OverlayViewState, actions: Overla
   slotHead.className = 'kq-group-header';
   const slotTitle = doc.createElement('span');
   slotTitle.className = 'kq-section-title';
-  slotTitle.textContent = `ACTIVE RELIC SLOTS (${equippedIds.length} / ${maxSlots})`;
+  slotTitle.append(
+    makeIcon(doc, 'sparkle', 13),
+    doc.createTextNode(`Active Relic Slots (${equippedIds.length} / ${maxSlots})`),
+  );
 
   const ownedBadge = doc.createElement('span');
   ownedBadge.className = 'kq-badge kq-badge-gold';
-  ownedBadge.textContent = `OWNED ${ownedIds.length} / ${view.catalog.relics.length}`;
+  ownedBadge.textContent = `Owned ${ownedIds.length} / ${view.catalog.relics.length}`;
   slotHead.append(slotTitle, ownedBadge);
   slotSection.appendChild(slotHead);
 
@@ -397,16 +416,15 @@ function buildBarnabyBody(doc: Document, view: OverlayViewState, actions: Overla
       sw.style.backgroundColor = relicDef.iconColor;
       const lbl = doc.createElement('span');
       lbl.textContent = relicDef.name;
-      const x = doc.createElement('span');
-      x.className = 'kq-socket-remove';
-      x.textContent = '✕';
+      const x = makeIcon(doc, 'close', 12, 'kq-socket-remove');
       socket.append(sw, lbl, x);
       socket.title = `Click to unequip ${relicDef.name}`;
       socket.addEventListener('click', () => {
+        actions.onUiSfx?.('back');
         actions.onToggleEquipRelic(relicDef.id);
       });
     } else {
-      socket.textContent = `SLOT ${i + 1}: EMPTY`;
+      socket.textContent = `Slot ${i + 1}: Empty`;
       socket.disabled = true;
     }
     socketRow.appendChild(socket);
@@ -421,95 +439,147 @@ function buildBarnabyBody(doc: Document, view: OverlayViewState, actions: Overla
   }
   wrap.appendChild(slotSection);
 
-  // All 16 Relics list
-  const list = doc.createElement('div');
-  list.className = 'kq-card-list';
+  // Filter Ribbon + Live Relic Grid
+  const filterBar = doc.createElement('div');
+  filterBar.className = 'kq-filter-bar';
+  const grid = doc.createElement('div');
+  grid.className = 'kq-card-grid';
 
-  for (const relic of view.catalog.relics) {
-    const owned = ownedIds.includes(relic.id);
-    const equipped = equippedIds.includes(relic.id);
-    const canAfford = view.simState.progress.crystals >= relic.price;
-    const slotsFull = !equipped && equippedIds.length >= maxSlots;
+  const renderRelicCards = () => {
+    grid.innerHTML = '';
+    const filtered = view.catalog.relics.filter((r) => {
+      if (activeRelicFilter === 'owned') return ownedIds.includes(r.id);
+      if (activeRelicFilter === 'equipped') return equippedIds.includes(r.id);
+      return true;
+    });
 
-    const card = doc.createElement('div');
-    let cls = 'kq-card';
-    if (equipped) cls += ' kq-card-equipped';
-    else if (!owned && canAfford) cls += ' kq-card-affordable';
-    card.className = cls;
-
-    const info = doc.createElement('div');
-    info.className = 'kq-card-info';
-
-    const titleRow = doc.createElement('div');
-    titleRow.className = 'kq-card-title';
-    const swatch = doc.createElement('span');
-    swatch.className = 'kq-swatch';
-    swatch.style.backgroundColor = relic.iconColor;
-    const nameSpan = doc.createElement('span');
-    nameSpan.textContent = relic.name;
-    titleRow.append(swatch, nameSpan);
-
-    if (equipped) {
-      const eq = doc.createElement('span');
-      eq.className = 'kq-badge kq-badge-active';
-      eq.textContent = '★ EQUIPPED';
-      titleRow.appendChild(eq);
-    } else if (owned) {
-      const ow = doc.createElement('span');
-      ow.className = 'kq-badge kq-badge-ready';
-      ow.textContent = 'OWNED';
-      titleRow.appendChild(ow);
+    if (filtered.length === 0) {
+      const empty = doc.createElement('div');
+      empty.className = 'kq-panel-subheading';
+      empty.textContent =
+        activeRelicFilter === 'equipped'
+          ? 'No relics currently equipped — purchase or equip a charm below.'
+          : 'No relics owned yet — collect crystals to acquire your first charm!';
+      grid.appendChild(empty);
+      return;
     }
 
-    const desc = doc.createElement('div');
-    desc.className = 'kq-card-desc';
-    desc.textContent = relic.description;
-    info.append(titleRow, desc);
+    for (const relic of filtered) {
+      const owned = ownedIds.includes(relic.id);
+      const equipped = equippedIds.includes(relic.id);
+      const canAfford = view.simState.progress.crystals >= relic.price;
+      const slotsFull = !equipped && equippedIds.length >= maxSlots;
 
-    const actionWrap = doc.createElement('div');
-    actionWrap.className = 'kq-card-action';
+      const card = doc.createElement('div');
+      let cls = 'kq-card';
+      if (equipped) cls += ' kq-card-equipped';
+      else if (!owned && canAfford) cls += ' kq-card-affordable';
+      card.className = cls;
 
-    if (!owned) {
-      const buyBtn = makeButton(
-        doc,
-        `BUY ${relic.price}◆`,
-        canAfford ? 'kq-btn kq-btn-sm kq-btn-primary' : 'kq-btn kq-btn-sm',
-        () => {
-          actions.onBuyRelic(relic.id);
-        },
-      );
-      buyBtn.disabled = !canAfford;
-      actionWrap.appendChild(buyBtn);
-      if (!canAfford) {
-        const need = doc.createElement('div');
-        need.className = 'kq-afford-hint';
-        need.textContent = `NEED ${relic.price - view.simState.progress.crystals}◆`;
-        actionWrap.appendChild(need);
+      const info = doc.createElement('div');
+      info.className = 'kq-card-info';
+
+      const titleRow = doc.createElement('div');
+      titleRow.className = 'kq-card-title';
+      const swatch = doc.createElement('span');
+      swatch.className = 'kq-swatch';
+      swatch.style.backgroundColor = relic.iconColor;
+      const nameSpan = doc.createElement('span');
+      nameSpan.textContent = relic.name;
+      titleRow.append(swatch, nameSpan);
+
+      if (equipped) {
+        const eq = doc.createElement('span');
+        eq.className = 'kq-badge kq-badge-active';
+        eq.append(makeIcon(doc, 'check', 10), doc.createTextNode('Equipped'));
+        titleRow.appendChild(eq);
+      } else if (owned) {
+        const ow = doc.createElement('span');
+        ow.className = 'kq-badge kq-badge-ready';
+        ow.textContent = 'Owned';
+        titleRow.appendChild(ow);
       }
-    } else {
-      const eqBtn = makeButton(
-        doc,
-        equipped ? 'UNEQUIP' : slotsFull ? 'SLOTS FULL' : 'EQUIP',
-        equipped
-          ? 'kq-btn kq-btn-sm kq-btn-active'
-          : slotsFull
-            ? 'kq-btn kq-btn-sm'
-            : 'kq-btn kq-btn-sm kq-btn-accent',
-        () => {
-          actions.onToggleEquipRelic(relic.id);
-        },
-      );
-      if (slotsFull) {
-        eqBtn.title = 'Unequip a relic above or buy more Relic Sockets from Vespera';
+
+      const desc = doc.createElement('div');
+      desc.className = 'kq-card-desc';
+      desc.textContent = relic.description;
+      info.append(titleRow, desc);
+
+      const actionWrap = doc.createElement('div');
+      actionWrap.className = 'kq-card-action';
+
+      if (!owned) {
+        const buyBtn = makeButton(
+          doc,
+          `${relic.price}`,
+          canAfford ? 'kq-btn kq-btn-sm kq-btn-primary' : 'kq-btn kq-btn-sm',
+          () => {
+            const ok = actions.onBuyRelic(relic.id);
+            actions.onUiSfx?.(ok ? 'confirm' : 'error');
+          },
+          'crystal',
+        );
+        buyBtn.disabled = !canAfford;
+        actionWrap.appendChild(buyBtn);
+        if (!canAfford) {
+          const need = doc.createElement('div');
+          need.className = 'kq-afford-hint';
+          need.textContent = `Need ${relic.price - view.simState.progress.crystals}`;
+          actionWrap.appendChild(need);
+        }
+      } else {
+        const eqBtn = makeButton(
+          doc,
+          equipped ? 'Unequip' : slotsFull ? 'Slots Full' : 'Equip',
+          equipped
+            ? 'kq-btn kq-btn-sm kq-btn-active'
+            : slotsFull
+              ? 'kq-btn kq-btn-sm'
+              : 'kq-btn kq-btn-sm kq-btn-accent',
+          () => {
+            const ok = actions.onToggleEquipRelic(relic.id);
+            actions.onUiSfx?.(ok ? 'confirm' : 'error');
+          },
+        );
+        if (slotsFull) {
+          eqBtn.title = 'Unequip a relic above or buy more Relic Sockets from Vespera';
+        }
+        actionWrap.appendChild(eqBtn);
       }
-      actionWrap.appendChild(eqBtn);
+
+      card.append(info, actionWrap);
+      grid.appendChild(card);
     }
+  };
 
-    card.append(info, actionWrap);
-    list.appendChild(card);
+  const filters: ReadonlyArray<{ id: RelicFilter; label: string }> = [
+    { id: 'all', label: `All (${view.catalog.relics.length})` },
+    { id: 'owned', label: `Owned (${ownedIds.length})` },
+    { id: 'equipped', label: `Equipped (${equippedIds.length})` },
+  ];
+
+  const filterBtns: HTMLButtonElement[] = [];
+  for (const f of filters) {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = activeRelicFilter === f.id ? 'kq-btn kq-btn-xs kq-btn-pill kq-btn-active' : 'kq-btn kq-btn-xs kq-btn-pill';
+    b.textContent = f.label;
+    b.addEventListener('click', () => {
+      activeRelicFilter = f.id;
+      actions.onUiSfx?.('tab');
+      for (let i = 0; i < filterBtns.length; i++) {
+        const btn = filterBtns[i]!;
+        const fid = filters[i]!.id;
+        btn.className = activeRelicFilter === fid ? 'kq-btn kq-btn-xs kq-btn-pill kq-btn-active' : 'kq-btn kq-btn-xs kq-btn-pill';
+      }
+      renderRelicCards();
+    });
+    filterBtns.push(b);
+    filterBar.appendChild(b);
   }
 
-  wrap.appendChild(list);
+  wrap.append(filterBar, grid);
+  renderRelicCards();
   return wrap;
 }
 
@@ -561,19 +631,19 @@ function buildGarronBody(doc: Document, view: OverlayViewState, actions: Overlay
     const biomeBadge = doc.createElement('span');
     biomeBadge.className = 'kq-biome-chip';
     biomeBadge.style.backgroundColor = biomePal?.skyBot ?? '#2a1847';
-    biomeBadge.style.borderColor = biomePal?.colors[0] ?? '#ffd644';
+    biomeBadge.style.borderColor = biomePal?.colors[0] ?? '#ffd84d';
     biomeBadge.textContent = `${boss.biome} · ${biomePal?.label ?? boss.biome}`;
 
     const tierBadge = doc.createElement('span');
     tierBadge.className = boss.isMiniBoss ? 'kq-badge' : 'kq-badge kq-badge-secret';
-    tierBadge.textContent = boss.isMiniBoss ? 'MINI-BOSS' : 'GUARDIAN';
+    tierBadge.textContent = boss.isMiniBoss ? 'Mini-Boss' : 'Guardian';
 
     titleRow.append(idxTag, nameEl, hpBadge, biomeBadge, tierBadge);
 
     if (defeated) {
       const defBadge = doc.createElement('span');
       defBadge.className = 'kq-badge kq-badge-active';
-      defBadge.textContent = '✓ DEFEATED';
+      defBadge.append(makeIcon(doc, 'check', 10), doc.createTextNode('Defeated'));
       titleRow.appendChild(defBadge);
     }
 
@@ -582,16 +652,18 @@ function buildGarronBody(doc: Document, view: OverlayViewState, actions: Overlay
     const unlockTxt = boss.unlockForm
       ? ` · Unlocks ${FORM_DISPLAY_NAMES[boss.unlockForm]}`
       : '';
-    desc.textContent = `${boss.subtitle} · Reward: ${boss.crystalReward}◆ + ${boss.coinReward}★${unlockTxt}`;
+    desc.textContent = `${boss.subtitle} · Reward: ${boss.crystalReward} Crystals + ${boss.coinReward} Coin${unlockTxt}`;
     info.append(titleRow, desc);
 
     const fightBtn = makeButton(
       doc,
-      defeated ? '⚔ REMATCH' : '⚔ CHALLENGE',
+      defeated ? 'Rematch' : 'Challenge',
       defeated ? 'kq-btn kq-btn-sm kq-btn-accent' : 'kq-btn kq-btn-sm kq-btn-primary',
       () => {
+        actions.onUiSfx?.('confirm');
         actions.onChallengeBoss(boss.id);
       },
+      'swords',
     );
 
     card.append(info, fightBtn);
@@ -615,15 +687,14 @@ function buildBarnacleBody(doc: Document, view: OverlayViewState, actions: Overl
   );
   wrap.appendChild(stats);
 
-  // 3-Tier Hazard Briefing
-  const briefSec = makeSection(doc, '3-Tier Cursed Galleon Hazard Briefing');
+  const briefSec = makeSection(doc, '3-Tier Cursed Galleon Hazard Briefing', 'anchor');
   const tierGrid = doc.createElement('div');
   tierGrid.className = 'kq-tier-grid';
 
   for (const t of GHOST_SHIP_TIERS) {
     const box = doc.createElement('div');
     box.className = 'kq-tier-card';
-    box.style.borderLeftColor = t.color;
+    box.style.borderTopColor = t.color;
 
     const head = doc.createElement('div');
     head.className = 'kq-tier-head';
@@ -650,11 +721,13 @@ function buildBarnacleBody(doc: Document, view: OverlayViewState, actions: Overl
   launchWrap.className = 'kq-shop-cta';
   const sailBtn = makeButton(
     doc,
-    '⚓ SET SAIL — LAUNCH GHOST SHIP ENDLESS',
+    'Set Sail — Launch Ghost Ship Endless',
     'kq-btn kq-btn-primary',
     () => {
+      actions.onUiSfx?.('confirm');
       actions.onStartGhostShip();
     },
+    'anchor',
   );
   launchWrap.appendChild(sailBtn);
   wrap.appendChild(launchWrap);
@@ -666,23 +739,23 @@ function buildCodexBody(doc: Document, view: OverlayViewState): HTMLElement {
   const wrap = doc.createElement('div');
   wrap.className = 'kq-shop-body';
 
-  // 1. Live Device-Matched Controls
-  const ctrlSec = makeSection(doc, `Live Controls — ${formatDeviceBadge(view.activeDevice)}`);
+  const ctrlSec = makeSection(doc, `Live Controls — ${formatDeviceBadge(view.activeDevice)}`, 'gamepad');
   const ctrlGrid = doc.createElement('div');
   ctrlGrid.className = 'kq-glyph-grid';
 
   const moveLabel =
     view.activeDevice === 'keyboard'
-      ? 'ARROWS / WASD'
+      ? 'Arrows / WASD'
       : view.activeDevice === 'touch'
-        ? 'SLIDE D-PAD'
-        : 'LEFT STICK / D-PAD';
+        ? 'Slide D-Pad'
+        : 'Left Stick / D-Pad';
 
   const rows: ReadonlyArray<[string, string]> = [
     ['Move / Aim', moveLabel],
     ['Jump / Double Jump', view.glyphs.jump],
+    ['Drop Through Platform', 'Down + Jump'],
     ['Dash / Form Ability', view.glyphs.dash],
-    ['Air Stomp', view.glyphs.stomp],
+    ['Ground / Air Stomp', view.glyphs.stomp],
     ['Switch Elemental Form', view.glyphs.form],
     ['Interact / Talk', view.glyphs.interact],
     ['World Map', view.glyphs.map],
@@ -697,15 +770,18 @@ function buildCodexBody(doc: Document, view: OverlayViewState): HTMLElement {
     l.textContent = label;
     const cap = doc.createElement('span');
     cap.className = 'kq-keycap';
-    cap.textContent = glyph;
+    cap.textContent = glyph.startsWith('[') && glyph.endsWith(']') ? glyph.slice(1, -1) : glyph;
     item.append(l, cap);
     ctrlGrid.appendChild(item);
   }
   ctrlSec.appendChild(ctrlGrid);
   wrap.appendChild(ctrlSec);
 
-  // 2. All 6 Elemental Form Abilities
-  const formSec = makeSection(doc, `Elemental Forms (${view.simState.progress.unlockedForms.length} / ${HERO_FORMS.length})`);
+  const formSec = makeSection(
+    doc,
+    `Elemental Forms (${view.simState.progress.unlockedForms.length} / ${HERO_FORMS.length})`,
+    'flame',
+  );
   const formList = doc.createElement('div');
   formList.className = 'kq-card-list';
   for (const form of view.catalog.forms) {
@@ -742,7 +818,8 @@ function buildCodexBody(doc: Document, view: OverlayViewState): HTMLElement {
       : unlocked
         ? 'kq-badge kq-badge-active'
         : 'kq-badge kq-badge-danger';
-    st.textContent = active ? 'ACTIVE' : unlocked ? 'UNLOCKED' : '🔒 LOCKED';
+    if (!unlocked) st.appendChild(makeIcon(doc, 'lock', 10));
+    st.appendChild(doc.createTextNode(active ? 'Active' : unlocked ? 'Unlocked' : 'Locked'));
 
     titleRow.append(palStrip, nm, st);
 
@@ -759,18 +836,17 @@ function buildCodexBody(doc: Document, view: OverlayViewState): HTMLElement {
   formSec.appendChild(formList);
   wrap.appendChild(formSec);
 
-  // 3. Combo-Heal & Scoring Rules
-  const comboSec = makeSection(doc, 'Combo-Heal & Momentum Rules');
+  const comboSec = makeSection(doc, 'Combo-Heal & Momentum Rules', 'sparkle');
   const ruleList = doc.createElement('div');
   ruleList.className = 'kq-rules-list';
 
   const healPct = Math.round(COMBO_RULES.HEAL_THRESHOLD * 100);
   const rules: ReadonlyArray<string> = [
-    `COMBO GAUGE TIMERS: Normal Rooms ${COMBO_PRESETS.normal.maxTimer.toFixed(1)}s · Combat Arenas ${COMBO_PRESETS.arena.maxTimer.toFixed(1)}s · Boss Fights ${COMBO_PRESETS.boss.maxTimer.toFixed(1)}s.`,
-    `AUTO COMBO-HEAL: Filling the Combo Gauge to ≥${healPct}% automatically restores +1 Heart Orb, recharges Basalt Aegis (Rock Shield), and resets gauge smoothly.`,
-    `DECAY PAUSE: Combo decay freezes during dashes, form abilities, and Maniac Crystal hit-windows so aggressive chaining stays alive.`,
-    `MAX ROOM COMBO: Clearing every foe in a room in one unbroken chain triggers dramatic slow-motion and awards a bonus Golden Coin (+1 Heart with Vampiric Amulet)!`,
-    `CRYSTAL SCALING: Every +${COMBO_RULES.CRYSTAL_PER_COMBO_STEP} combo hits boosts crystal drops; rapid hits within ${COMBO_RULES.MINI_COMBO_WINDOW.toFixed(2)}s score Mini-Combo bursts.`,
+    `Combo Gauge Timers: Normal Rooms ${COMBO_PRESETS.normal.maxTimer.toFixed(1)}s · Combat Arenas ${COMBO_PRESETS.arena.maxTimer.toFixed(1)}s · Boss Fights ${COMBO_PRESETS.boss.maxTimer.toFixed(1)}s.`,
+    `Auto Combo-Heal: Filling the Combo Gauge to ≥${healPct}% automatically restores +1 Heart Orb, recharges Basalt Aegis (Rock Shield), and resets gauge smoothly.`,
+    `Decay Pause: Combo decay freezes during dashes, form abilities, and Maniac Crystal hit-windows so aggressive chaining stays alive.`,
+    `Max Room Combo: Clearing every foe in a room in one unbroken chain triggers dramatic slow-motion and awards a bonus Golden Coin (+1 Heart with Vampiric Amulet).`,
+    `Crystal Scaling: Every +${COMBO_RULES.CRYSTAL_PER_COMBO_STEP} combo hits boosts crystal drops; rapid hits within ${COMBO_RULES.MINI_COMBO_WINDOW.toFixed(2)}s score Mini-Combo bursts.`,
   ];
 
   for (const r of rules) {
@@ -782,8 +858,7 @@ function buildCodexBody(doc: Document, view: OverlayViewState): HTMLElement {
   comboSec.appendChild(ruleList);
   wrap.appendChild(comboSec);
 
-  // 4. Quest Progress Ledger
-  const progSec = makeSection(doc, 'Quest Progress Ledger');
+  const progSec = makeSection(doc, 'Quest Progress Ledger', 'trophy');
   const progGrid = doc.createElement('div');
   progGrid.className = 'kq-stat-grid kq-stat-grid-3';
   progGrid.append(
@@ -813,9 +888,15 @@ export function buildShopPanel(
   panel.style.setProperty('--shop-accent', theme.accent);
   panel.setAttribute('data-shop', shopId);
 
-  // Bespoke NPC Header
   const header = doc.createElement('div');
   header.className = 'kq-panel-header kq-shop-header';
+
+  const npcWrap = doc.createElement('div');
+  npcWrap.className = 'kq-shop-npc-wrap';
+
+  const avatar = doc.createElement('div');
+  avatar.className = 'kq-shop-avatar';
+  avatar.appendChild(makeIcon(doc, theme.icon, 24));
 
   const leftHead = doc.createElement('div');
   const titleLine = doc.createElement('div');
@@ -842,20 +923,28 @@ export function buildShopPanel(
   quote.textContent = theme.greeting;
 
   leftHead.append(titleLine, sub, quote);
+  npcWrap.append(avatar, leftHead);
 
   const rightHead = doc.createElement('div');
   rightHead.className = 'kq-shop-balance';
 
   const purse = doc.createElement('span');
   purse.className = 'kq-crystal-pill';
-  purse.textContent = `◆ ${view.simState.progress.crystals}`;
+  purse.append(makeIcon(doc, 'crystal', 15), doc.createTextNode(String(view.simState.progress.crystals)));
 
-  const closeBtn = makeButton(doc, 'CLOSE', 'kq-btn kq-btn-sm kq-btn-primary', () => {
-    actions.onCloseShop();
-  });
+  const closeBtn = makeButton(
+    doc,
+    'Close',
+    'kq-btn kq-btn-sm kq-btn-primary',
+    () => {
+      actions.onUiSfx?.('back');
+      actions.onCloseShop();
+    },
+    'close',
+  );
   rightHead.append(purse, closeBtn);
 
-  header.append(leftHead, rightHead);
+  header.append(npcWrap, rightHead);
   panel.appendChild(header);
 
   const scroll = doc.createElement('div');
@@ -887,7 +976,8 @@ export function buildShopPanel(
 
   const footer = doc.createElement('div');
   footer.className = 'kq-footer-hint';
-  footer.textContent = `${formatDeviceBadge(view.activeDevice)} · NAVIGATE ↑↓←→ · CONFIRM ${view.glyphs.jump} · CLOSE ${view.glyphs.pause}`;
+  const navLabel = view.activeDevice === 'keyboard' ? 'Arrow Keys' : 'D-Pad';
+  footer.textContent = `${formatDeviceBadge(view.activeDevice)} · Navigate ${navLabel} · Confirm ${view.glyphs.jump} · Close ${view.glyphs.pause}`;
   panel.appendChild(footer);
 
   return panel;

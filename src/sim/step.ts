@@ -165,6 +165,7 @@ function createInitialHero(
     wallSalivaActive: false,
     wallSalivaTopY: y,
     fireImmunityTimer: 0,
+    oneWayDropTimer: 0,
   };
 }
 
@@ -342,6 +343,7 @@ function loadRoomIntoState(
   hero.wallSalivaActive = false;
   hero.wallSalivaTopY = sy;
   hero.fireImmunityTimer = 0;
+  hero.oneWayDropTimer = 0;
   hero.maxHp = computeMaxHp(state);
   hero.maxAirJumps = computeMaxAirJumps(state);
   hero.jumpsRemaining = hero.maxAirJumps;

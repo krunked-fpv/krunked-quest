@@ -2,6 +2,17 @@
  * Krunked Quest — Application Composition Root
  */
 
+import '@fontsource/bungee/latin-400.css';
+import '@fontsource/rubik/latin-500.css';
+import '@fontsource/rubik/latin-600.css';
+import '@fontsource/rubik/latin-700.css';
+import '@fontsource/rubik/latin-800.css';
+import '@fontsource/plus-jakarta-sans/latin-500.css';
+import '@fontsource/plus-jakarta-sans/latin-600.css';
+import '@fontsource/plus-jakarta-sans/latin-700.css';
+import '@fontsource/jetbrains-mono/latin-600.css';
+import '@fontsource/jetbrains-mono/latin-700.css';
+
 import { GameApp } from './app/GameApp';
 import { createAssetPackManager } from './assets/CustomPackLoader';
 import { createAudioEngine } from './audio/index';

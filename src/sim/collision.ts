@@ -642,9 +642,11 @@ export function moveHeroWithCollision(
           }
 
           if (tile === TileCode.OneWay) {
-            const tileTop = botTy + 1;
-            if (prevBottom >= tileTop - SIM_RULES.ONE_WAY_SNAP_TOLERANCE && hero.y <= tileTop) {
-              landedSolid = true;
+            if (hero.oneWayDropTimer <= 0) {
+              const tileTop = botTy + 1;
+              if (prevBottom >= tileTop - SIM_RULES.ONE_WAY_SNAP_TOLERANCE && hero.y <= tileTop) {
+                landedSolid = true;
+              }
             }
             continue;
           }
@@ -729,7 +731,7 @@ export function moveHeroWithCollision(
     for (let tx = minTx; tx <= maxTx; tx++) {
       const tile = getTileAt(tiles, rw, rh, tx, botTy);
       if (tile === TileCode.OneWay) {
-        if (Math.abs(hero.y - (botTy + 1)) <= 0.05) {
+        if (hero.oneWayDropTimer <= 0 && Math.abs(hero.y - (botTy + 1)) <= 0.05) {
           groundedThisMove = true;
         }
       } else if (isSolidTile(tile)) {
@@ -937,6 +939,45 @@ function senseHeroZones(state: SimState, room: RoomDef, result: MoveResult): voi
   hero.inAntigrav = inAntigrav;
   hero.inWindY = windY;
   hero.inWindX = windX;
+}
+
+/**
+ * Returns true iff hero is supported strictly by OneWay platform tiles (and NOT solid tiles
+ * or solid moving platforms), allowing safe Down + Jump drop-through.
+ */
+export function isStandingOnlyOnOneWay(state: SimState, room: RoomDef): boolean {
+  const hero = state.hero;
+  if (!hero.grounded) return false;
+  const skin = SIM_RULES.TILE_SKIN;
+  const botTy = Math.floor(hero.y - 0.03);
+  const minTx = Math.floor(hero.x + skin);
+  const maxTx = Math.floor(hero.x + hero.width - skin);
+
+  // Never drop through if supported by a solid moving platform
+  for (let i = 0; i < state.platforms.length; i++) {
+    const plat = state.platforms[i];
+    if (!plat.solid) continue;
+    const platTop = plat.y + plat.height;
+    if (
+      hero.x + hero.width > plat.x + skin &&
+      hero.x < plat.x + plat.width - skin &&
+      Math.abs(hero.y - platTop) <= 0.06
+    ) {
+      return false;
+    }
+  }
+
+  let hasOneWay = false;
+  for (let tx = minTx; tx <= maxTx; tx++) {
+    const tile = getTileAt(state.roomTiles, room.widthTiles, room.heightTiles, tx, botTy);
+    if (isSolidTile(tile)) {
+      return false;
+    }
+    if (tile === TileCode.OneWay && Math.abs(hero.y - (botTy + 1)) <= 0.08) {
+      hasOneWay = true;
+    }
+  }
+  return hasOneWay;
 }
 
 /**

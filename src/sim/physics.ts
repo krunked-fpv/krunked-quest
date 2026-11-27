@@ -10,6 +10,7 @@ import {
   carryHeroOnMovingPlatforms,
   detectAdjacentWall,
   isAdjacentWallCrumble,
+  isStandingOnlyOnOneWay,
   moveHeroWithCollision,
   smashFloorUnderHero,
   sweepStompBlockDestroyer,
@@ -520,6 +521,7 @@ export function stepHeroPhysics(
   if (hero.invulnTimer > 0) hero.invulnTimer = Math.max(0, hero.invulnTimer - dt);
   if (hero.magicShieldTimer > 0) hero.magicShieldTimer = Math.max(0, hero.magicShieldTimer - dt);
   if (hero.fireImmunityTimer > 0) hero.fireImmunityTimer = Math.max(0, hero.fireImmunityTimer - dt);
+  if (hero.oneWayDropTimer > 0) hero.oneWayDropTimer = Math.max(0, hero.oneWayDropTimer - dt);
   if (hero.lastEnemyHitTimer > 0) hero.lastEnemyHitTimer = Math.max(0, hero.lastEnemyHitTimer - dt);
   if (hero.stompSpamTimer > 0) hero.stompSpamTimer = Math.max(0, hero.stompSpamTimer - dt);
   if (hero.wallJumpTimer > 0) hero.wallJumpTimer = Math.max(0, hero.wallJumpTimer - dt);
@@ -885,8 +887,28 @@ export function stepHeroPhysics(
         }
       }
 
+      // 6e-0. One-Way Platform Drop-Through (Down + Jump when standing strictly on OneWay tiles)
+      if (
+        !skipGravityThisTick &&
+        hero.preJumpTimer > 0 &&
+        hero.grounded &&
+        input.moveY < -0.5 &&
+        isStandingOnlyOnOneWay(state, room)
+      ) {
+        hero.oneWayDropTimer = 0.22;
+        hero.grounded = false;
+        hero.coyoteTimer = 0;
+        hero.preJumpTimer = 0;
+        hero.jumpHoldTimer = 0;
+        hero.y -= 0.06;
+        hero.vy = -2.2;
+        hero.action = 'fall';
+        hero.scaleX = 0.88;
+        hero.scaleY = 1.14;
+        skipGravityThisTick = true;
+      }
       // 6e. Ground Jump (with Coyote & Pre-Jump buffer — preserves Ground Dash momentum!)
-      if (!skipGravityThisTick && hero.preJumpTimer > 0 && (hero.grounded || hero.coyoteTimer > 0)) {
+      else if (!skipGravityThisTick && hero.preJumpTimer > 0 && (hero.grounded || hero.coyoteTimer > 0)) {
         hero.vy = PHYSICS.JUMP_FORCE;
         hero.jumpHoldTimer = PHYSICS.JUMP_HOLD_TIME;
         hero.grounded = false;

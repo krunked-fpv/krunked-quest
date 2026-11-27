@@ -1,4 +1,5 @@
 import { DEFAULT_TOUCH_LAYOUT, type TouchLayoutConfig } from '../contracts/index.js';
+import { makeIcon } from './icons.js';
 import type { OverlayActions, OverlayViewState } from './OverlayManager.js';
 
 export interface TouchPresetDef {
@@ -11,7 +12,7 @@ export interface TouchPresetDef {
 export const TOUCH_LAYOUT_PRESETS: readonly TouchPresetDef[] = [
   {
     id: 'mobile_portrait',
-    label: 'MOBILE PORTRAIT',
+    label: 'Mobile Portrait',
     description: 'Compact lower-thumb reach for handheld portrait phones',
     layout: {
       opacity: 0.42,
@@ -24,7 +25,7 @@ export const TOUCH_LAYOUT_PRESETS: readonly TouchPresetDef[] = [
   },
   {
     id: 'mobile_landscape',
-    label: 'MOBILE LANDSCAPE',
+    label: 'Mobile Landscape',
     description: 'Balanced widescreen handheld thumb ergonomics',
     layout: {
       opacity: 0.38,
@@ -37,7 +38,7 @@ export const TOUCH_LAYOUT_PRESETS: readonly TouchPresetDef[] = [
   },
   {
     id: 'tesla_wide',
-    label: 'TESLA 16:9 WIDE',
+    label: 'Tesla 16:9 Wide',
     description: 'Larger inset controls tuned for wide 16:9 in-car touchscreens',
     layout: {
       opacity: 0.34,
@@ -50,7 +51,7 @@ export const TOUCH_LAYOUT_PRESETS: readonly TouchPresetDef[] = [
   },
   {
     id: 'reset',
-    label: 'RESET TOUCH',
+    label: 'Reset Touch',
     description: 'Restore default Krunked Quest touch geometry',
     layout: { ...DEFAULT_TOUCH_LAYOUT },
   },
@@ -58,6 +59,8 @@ export const TOUCH_LAYOUT_PRESETS: readonly TouchPresetDef[] = [
 
 interface SliderBinding {
   key: keyof TouchLayoutConfig;
+  min: number;
+  max: number;
   input: HTMLInputElement;
   valSpan: HTMLSpanElement;
   format: (v: number) => string;
@@ -88,20 +91,19 @@ export function buildTouchCustomizerSection(
 
   const title = doc.createElement('div');
   title.className = 'kq-section-title';
-  title.textContent = 'Touch Layout Customizer';
+  title.append(makeIcon(doc, 'touch', 14), doc.createTextNode('Touch Layout Customizer'));
 
   const statusBadge = doc.createElement('span');
   statusBadge.className = view.touchOverlayVisible ? 'kq-badge kq-badge-active' : 'kq-badge';
   statusBadge.textContent = view.touchOverlayVisible
-    ? 'LIVE OVERLAY VISIBLE'
-    : `MODE: ${view.settings.input.touchMode.toUpperCase()}`;
+    ? 'Live Overlay Visible'
+    : `Mode: ${view.settings.input.touchMode.toUpperCase()}`;
 
   head.append(title, statusBadge);
   sec.appendChild(head);
 
   const current: TouchLayoutConfig = { ...view.settings.input.touchLayout };
 
-  // Live 16:9 Interactive Layout Schematic Preview
   const previewFrame = doc.createElement('div');
   previewFrame.className = 'kq-touch-preview';
   previewFrame.setAttribute('aria-label', 'Live touch control placement preview');
@@ -121,7 +123,6 @@ export function buildTouchCustomizerSection(
   previewFrame.append(previewTag, previewDpad, previewAct);
   sec.appendChild(previewFrame);
 
-  // Preset buttons row
   const presetRow = doc.createElement('div');
   presetRow.className = 'kq-preset-row';
   const presetButtons = new Map<TouchPresetDef['id'], HTMLButtonElement>();
@@ -129,7 +130,6 @@ export function buildTouchCustomizerSection(
   const sliders: SliderBinding[] = [];
 
   const syncVisuals = () => {
-    // Update live mini-preview (scaled 0.28x for offsets inside the compact schematic)
     const op = current.opacity.toFixed(2);
     const sc = current.scale.toFixed(2);
     previewDpad.style.opacity = op;
@@ -137,14 +137,14 @@ export function buildTouchCustomizerSection(
     previewAct.style.opacity = op;
     previewAct.style.transform = `translate(${Math.round(current.actionOffsetX * 0.28)}px, ${Math.round(current.actionOffsetY * 0.28)}px) scale(${sc})`;
 
-    // Sync sliders & value labels
     for (const sb of sliders) {
       const val = current[sb.key];
       sb.input.value = String(val);
+      const pct = sb.max > sb.min ? Math.max(0, Math.min(100, ((val - sb.min) / (sb.max - sb.min)) * 100)) : 0;
+      sb.input.style.setProperty('--slider-pct', `${pct.toFixed(1)}%`);
       sb.valSpan.textContent = sb.format(val);
     }
 
-    // Highlight matching preset
     for (const preset of TOUCH_LAYOUT_PRESETS) {
       const btn = presetButtons.get(preset.id);
       if (!btn) continue;
@@ -168,6 +168,7 @@ export function buildTouchCustomizerSection(
     btn.title = preset.description;
     btn.setAttribute('data-touch-preset', preset.id);
     btn.addEventListener('click', () => {
+      actions.onUiSfx?.('confirm');
       Object.assign(current, preset.layout);
       actions.onUpdateTouchLayout({ ...preset.layout });
       syncVisuals();
@@ -177,7 +178,6 @@ export function buildTouchCustomizerSection(
   }
   sec.appendChild(presetRow);
 
-  // Sliders grid (Opacity, Scale, D-Pad X/Y, Action Cluster X/Y)
   const sliderGrid = doc.createElement('div');
   sliderGrid.className = 'kq-touch-slider-grid';
 
@@ -272,7 +272,7 @@ export function buildTouchCustomizerSection(
       syncVisuals();
     });
 
-    sliders.push({ key: sp.key, input, valSpan, format: sp.format });
+    sliders.push({ key: sp.key, min: sp.min, max: sp.max, input, valSpan, format: sp.format });
     wrap.append(input, valSpan);
     row.append(lbl, wrap);
     sliderGrid.appendChild(row);

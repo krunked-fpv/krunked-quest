@@ -887,6 +887,46 @@ export class ParticleSystem {
     this.spawnShockwave(x, y + 0.45, 1.5, 0.28, pal[4], pal[0], false);
   }
 
+  /** Crisp running footfall / turnaround dust puff (zero-alloc). */
+  public emitFootstepDust(x: number, y: number, moveDir: number, skid = false): void {
+    const count = skid ? 4 : 2;
+    for (let i = 0; i < count; i++) {
+      this.spawnParticle(
+        x + this.randRange(-0.12, 0.12),
+        y + 0.04,
+        -moveDir * this.randRange(0.7, skid ? 2.8 : 1.7),
+        this.randRange(0.35, skid ? 1.5 : 0.9),
+        -5.5,
+        skid ? 3 : 2,
+        HIGHLIGHT_CREAM,
+        '#cbb8d9',
+        this.randRange(0.16, skid ? 0.28 : 0.22),
+        ParticleShape.Square,
+        false,
+        0.92,
+      );
+    }
+  }
+
+  /** Subtle wall-slide friction sparks / glistening mist droplets (zero-alloc). */
+  public emitWallSlideSpark(x: number, y: number, wallSide: number, form: HeroFormId): void {
+    const pal = HERO_FORM_PALETTES[form];
+    this.spawnParticle(
+      x,
+      y + this.randRange(-0.15, 0.2),
+      -wallSide * this.randRange(0.8, 2.1),
+      this.randRange(0.4, 1.8),
+      -6.5,
+      2,
+      HIGHLIGHT_CREAM,
+      pal[4],
+      this.randRange(0.16, 0.26),
+      ParticleShape.Diamond,
+      false,
+      0.93,
+    );
+  }
+
   public update(dt: number): void {
     for (let i = 0; i < MAX_PARTICLES; i++) {
       const p = this.particles[i]!;

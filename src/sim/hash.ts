@@ -82,6 +82,7 @@ export function hashState(state: SimState): number {
   h = fnvInt32(h, hero.wallSlideDir);
   h = fnvByte(h, hero.wallSalivaActive ? 1 : 0);
   h = fnvFloat(h, hero.fireImmunityTimer);
+  h = fnvFloat(h, hero.oneWayDropTimer);
 
   // Combo state
   const combo = state.combo;

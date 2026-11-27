@@ -242,14 +242,17 @@ export class GameApp {
 
         const frame = this._input.pollFrame();
         if (frame.pausePressed) {
+          this._audio.playUiSfx?.('confirm');
           this.setScreenMode('paused');
           break;
         }
         if (frame.mapPressed) {
+          this._audio.playUiSfx?.('tab');
           this.setScreenMode('map');
           break;
         }
         if (frame.interactPressed && this._state.activeShopPrompt) {
+          this._audio.playUiSfx?.('confirm');
           this._openShop(this._state.activeShopPrompt);
           break;
         }
@@ -349,9 +352,24 @@ export class GameApp {
         case 'hero_dead':
           this._input.triggerHaptic('death');
           break;
-        case 'heal':
+        case 'heal': {
           this._input.triggerHaptic('heal');
+          const room = this._catalog.rooms.get(this._state.roomId);
+          if (room) {
+            const hx = this._state.hero.x + this._state.hero.width * 0.5;
+            const hy = this._state.hero.y + this._state.hero.height * 0.5;
+            const nearShrine = room.props.some(
+              (p) =>
+                p.kind === 'save_shrine' &&
+                Math.hypot(hx - (p.x + (p.width ?? 1) * 0.5), hy - (p.y + (p.height ?? 1) * 0.5)) <= 2.0,
+            );
+            if (nearShrine) {
+              this._saveCurrentProgress();
+              this._showToast('RESTED & SAVED AT SHRINE');
+            }
+          }
           break;
+        }
         case 'boss_defeated':
           this._input.triggerHaptic('stomp');
           this._syncMusicContext();
@@ -809,6 +827,10 @@ export class GameApp {
         this._saveManager.clear();
         this._showToast('SAVE CLEARED');
         this._renderOverlay();
+      },
+      onUiSfx: (kind) => {
+        this._unlockAudioOnce();
+        this._audio.playUiSfx?.(kind);
       },
     };
   }

@@ -1885,6 +1885,94 @@ export class ProceduralSynth {
     }
   }
 
+  /**
+   * Tactile 16-bit menu & UI audio feedback (cursor move, confirm, back, tab switch, error).
+   */
+  public playUiSfx(kind: 'move' | 'confirm' | 'back' | 'tab' | 'error'): void {
+    if (this.disposed) return;
+    if (this.settings.muted || this.settings.masterVolume <= 0 || this.settings.sfxVolume <= 0) {
+      return;
+    }
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') {
+      return;
+    }
+
+    const tMs = nowMs();
+    const key = `ui:${kind}`;
+    const lastMs = this.lastEventTimeMs.get(key) ?? -Infinity;
+    if (tMs - lastMs < 24) return;
+    this.lastEventTimeMs.set(key, tMs);
+
+    const t = ctx.currentTime;
+    switch (kind) {
+      case 'move':
+        this.spawnTone({
+          wave: 'triangle',
+          startFreq: 640 * this.jitter(0.02),
+          endFreq: 780,
+          startTime: t,
+          duration: 0.042,
+          gain: 0.08,
+          priority: 1,
+        });
+        break;
+      case 'tab':
+        this.spawnTone({
+          wave: 'triangle',
+          startFreq: 520,
+          endFreq: 760,
+          startTime: t,
+          duration: 0.055,
+          gain: 0.095,
+          priority: 2,
+        });
+        break;
+      case 'confirm':
+        this.spawnTone({
+          wave: 'triangle',
+          startFreq: 587.33,
+          startTime: t,
+          duration: 0.06,
+          gain: 0.11,
+          priority: 2,
+        });
+        this.spawnTone({
+          wave: 'triangle',
+          startFreq: 880,
+          endFreq: 932.33,
+          startTime: t + 0.045,
+          duration: 0.095,
+          gain: 0.12,
+          priority: 2,
+        });
+        break;
+      case 'back':
+        this.spawnTone({
+          wave: 'triangle',
+          startFreq: 520,
+          endFreq: 330,
+          startTime: t,
+          duration: 0.075,
+          gain: 0.095,
+          priority: 2,
+        });
+        break;
+      case 'error':
+        this.spawnTone({
+          wave: 'sawtooth',
+          startFreq: 195,
+          endFreq: 145,
+          startTime: t,
+          duration: 0.11,
+          gain: 0.09,
+          filterHz: 950,
+          priority: 2,
+        });
+        break;
+    }
+  }
+
   private sfxVictory(): void {
     const t = this.ctx!.currentTime;
     this.duckMusic(0.25, 1.1, 0.5);
