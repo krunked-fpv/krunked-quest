@@ -522,7 +522,7 @@ describe('Hero Core Physics Feel', () => {
     expect(sTriple.hero.jumpsRemaining).toBe(0);
   });
 
-  it('handles wall slide (-4.0 basic vs -2.0 form), wall jump, wall dash, ground dash decay, and slippery vines', () => {
+  it('handles press-into wall slide (-4.0 basic vs -2.0 form), 3x wall jump, 0.5x decay wall dash, jump-preserving ground dash, and slippery vines', () => {
     const room = makeRoom('wall_vine', [
       '##################',
       '#................#',
@@ -537,48 +537,68 @@ describe('Hero Core Physics Feel', () => {
     const catalog = makeTestCatalog([room]);
     const engine = createSimEngine();
 
-    // Wall slide basic (-4.0)
+    // Does NOT auto-stick to wall when not pressing into it
+    const sNoStick = engine.createInitialState(catalog);
+    sNoStick.hero.vy = -4;
+    stepN(engine, sNoStick, catalog, 4);
+    expect(sNoStick.hero.action).not.toBe('wall_slide');
+
+    // Wall slide basic (pressing INTO left wall -> arrests fall, lerps toward -4.0, saliva active)
     const sBasic = engine.createInitialState(catalog);
     sBasic.hero.vy = -10;
-    stepN(engine, sBasic, catalog, 5);
+    stepN(engine, sBasic, catalog, 12, () => ({ moveX: -1 }));
     expect(sBasic.hero.action).toBe('wall_slide');
-    expect(sBasic.hero.vy).toBeCloseTo(PHYSICS.WALL_SLIDE_BASIC, 1);
+    expect(sBasic.hero.wallSalivaActive).toBe(true);
+    expect(sBasic.hero.tongueKind).toBe('wall_slide');
+    expect(sBasic.hero.vy).toBeLessThan(0);
+    expect(sBasic.hero.vy).toBeGreaterThanOrEqual(PHYSICS.WALL_SLIDE_BASIC - 0.1);
 
-    // Wall jump (5.0, 15.5) away from left wall (onWall = -1 -> jumpDir = +1)
-    const wjEv = stepN(engine, sBasic, catalog, 1, () => ({ jumpPressed: true, jumpHeld: true }));
+    // Wall jump (15.0 = 3x wallJumpForce.x, vy = 10.0 jumpForce) away from left wall (onWall = -1 -> dir = +1)
+    const wjEv = stepN(engine, sBasic, catalog, 1, () => ({ jumpPressed: true, jumpHeld: true, moveX: -1 }));
     expect(wjEv.some((e) => e.type === 'wall_jump' && e.dir === 1)).toBe(true);
-    expect(sBasic.hero.vx).toBeCloseTo(PHYSICS.WALL_JUMP_FORCE_X, 1);
-    expect(sBasic.hero.vy).toBeCloseTo(PHYSICS.WALL_JUMP_FORCE_Y, 1);
+    expect(sBasic.hero.vx).toBeCloseTo(PHYSICS.WALL_JUMP_FORCE_X * 3, 1);
+    expect(sBasic.hero.vy).toBeCloseTo(PHYSICS.JUMP_FORCE, 1);
 
-    // Wall slide form (-2.0) + Wall dash (17.0, 8.0)
+    // Wall slide form (lerps gently toward -2.0) + Wall dash (17.0, 8.0 with 0.5x decay rate!)
     const sForm = engine.createInitialState(catalog, {
       progress: { unlockedForms: ['krunk_basic', 'krunk_fire'] },
     });
     sForm.hero.form = 'krunk_fire';
     sForm.hero.vy = -10;
-    stepN(engine, sForm, catalog, 5);
+    stepN(engine, sForm, catalog, 25, () => ({ moveX: -1 }));
     expect(sForm.hero.action).toBe('wall_slide');
-    expect(sForm.hero.vy).toBeCloseTo(PHYSICS.WALL_SLIDE_FORM, 1);
+    expect(sForm.hero.vy).toBeGreaterThanOrEqual(PHYSICS.WALL_SLIDE_FORM - 0.1);
 
-    const wdEv = stepN(engine, sForm, catalog, 1, () => ({ dashPressed: true }));
+    const wdEv = stepN(engine, sForm, catalog, 1, () => ({ dashPressed: true, moveX: -1 }));
     expect(wdEv.some((e) => e.type === 'dash' && e.kind === 'wall')).toBe(true);
+    expect(wdEv.some((e) => e.type === 'tongue_lash' && e.kind === 'wall_dash')).toBe(true);
+    expect(sForm.hero.tongueKind).toBe('wall_dash');
     expect(sForm.hero.vx).toBeCloseTo(PHYSICS.WALL_STOMP_FORCE_X, 1);
     expect(sForm.hero.vy).toBeCloseTo(PHYSICS.WALL_STOMP_FORCE_Y, 1);
+    // 0.5x decay rate over 15 ticks (0.25s): vx loses ~2.6 u/s -> stays > 13.5 u/s!
+    stepN(engine, sForm, catalog, 15);
+    expect(sForm.hero.vx).toBeGreaterThan(13.0);
 
-    // Ground dash (17.0, 12.0) decaying linearly back to 6.6 over 0.55s
+    // Ground dash (17.0, 12.0) decaying smoothly over 0.55s AND preserving horizontal burst across mid-dash jump!
     const sDash = engine.createInitialState(catalog);
     sDash.hero.x = 5;
     sDash.hero.y = 1;
     stepN(engine, sDash, catalog, 2);
-    stepN(engine, sDash, catalog, 1, () => ({ dashPressed: true }));
+    const gdEv = stepN(engine, sDash, catalog, 1, () => ({ dashPressed: true }));
+    expect(gdEv.some((e) => e.type === 'tongue_lash' && e.kind === 'ground_dash')).toBe(true);
     expect(sDash.hero.action).toBe('ground_dash');
+    expect(sDash.hero.tongueKind).toBe('ground_dash');
     expect(sDash.hero.vx).toBeCloseTo(PHYSICS.GROUND_STOMP_FORCE_X, 1);
     expect(sDash.hero.vy).toBeCloseTo(PHYSICS.GROUND_STOMP_FORCE_Y, 1);
-    stepN(engine, sDash, catalog, 17); // ~half of 0.55s
-    expect(sDash.hero.vx).toBeGreaterThan(PHYSICS.MAX_SPEED);
-    expect(sDash.hero.vx).toBeLessThan(PHYSICS.GROUND_STOMP_FORCE_X);
-    stepN(engine, sDash, catalog, 20);
-    expect(Math.abs(sDash.hero.vx)).toBeLessThanOrEqual(PHYSICS.MAX_SPEED + 0.1);
+    // Double jump 5 ticks into ground dash MUST NOT cancel groundDashTimer or kill vx!
+    stepN(engine, sDash, catalog, 5);
+    const vxBeforeJump = sDash.hero.vx;
+    stepN(engine, sDash, catalog, 1, () => ({ jumpPressed: true }));
+    expect(sDash.hero.groundDashTimer).toBeGreaterThan(0.35);
+    expect(sDash.hero.vx).toBeGreaterThan(vxBeforeJump - 0.8);
+    expect(sDash.hero.vy).toBeCloseTo(PHYSICS.DOUBLE_JUMP_FORCE, 1);
+    stepN(engine, sDash, catalog, 35);
+    expect(Math.abs(sDash.hero.vx)).toBeLessThanOrEqual(PHYSICS.MAX_SPEED + 0.2);
 
     // Slippery vines: slides 3.0 -> 10.0 u/s, jump adds +-12.0 X + 13.0 Y
     const sVine = engine.createInitialState(catalog);
@@ -697,7 +717,7 @@ describe('All 6 Hero Forms & Upgrades', () => {
     expect(state.roomTiles[1 * room.widthTiles + 10]).toBe(TileCode.Empty);
   });
 
-  it('krunk_leaf: Leaf Glide (-1.0 vy, +4.0 wind updraft), LeafExtraJump (+13.0), LeafCombo (0.25x decay)', () => {
+  it('krunk_leaf: Leaf Glide (-1.0 vy, +5.2 wind updraft, cancels air_stomp), LeafExtraJump on Jump (+13.0), LeafCombo (0.25x decay)', () => {
     const room = makeRoom('leaf_lab', [
       '################',
       '#..............#',
@@ -717,29 +737,38 @@ describe('All 6 Hero Forms & Upgrades', () => {
       },
     });
     state.hero.form = 'krunk_leaf';
+    state.hero.maxAirJumps = 2;
+    state.hero.jumpsRemaining = 2;
 
-    // LeafExtraJump boosts +13.0 on dashPressed before gliding
+    // LeafExtraJump grants 3rd jump (2 air jumps) on Jump button!
+    stepN(engine, state, catalog, 1, () => ({ jumpPressed: true, jumpHeld: true }));
+    expect(state.hero.vy).toBeCloseTo(FORM_PARAMS.LEAF_EXTRA_JUMP_VY, 1);
+    expect(state.hero.jumpsRemaining).toBe(1);
+    stepN(engine, state, catalog, 1, () => ({ jumpPressed: true, jumpHeld: true }));
+    expect(state.hero.vy).toBeCloseTo(FORM_PARAMS.LEAF_EXTRA_JUMP_VY, 1);
+    expect(state.hero.jumpsRemaining).toBe(0);
+
+    // Holding Dash cancels AirStomp straight into Leaf Glide (-1.0 vy)
+    stepN(engine, state, catalog, 1, () => ({ stompPressed: true }));
+    expect(state.hero.action).toBe('air_stomp');
     stepN(engine, state, catalog, 1, () => ({ dashPressed: true, dashHeld: true }));
     expect(state.hero.action).toBe('leaf_glide');
-    expect(state.hero.vy).toBeCloseTo(FORM_PARAMS.LEAF_EXTRA_JUMP_VY, 1);
-
-    // Fall into steady glide at vy === -1.0
     stepN(engine, state, catalog, 45, () => ({ dashHeld: true }));
     expect(state.hero.vy).toBeCloseTo(FORM_PARAMS.LEAF_GLIDE_VY, 1);
 
-    // Enter WindUp zone at tx=10..11 -> rises smoothly toward +4.0
+    // Enter WindUp zone at tx=10..11 -> rises smoothly toward +5.2
     state.hero.x = 10.2;
     state.hero.y = 2.5;
     state.hero.vy = -1.0;
-    stepN(engine, state, catalog, 25, () => ({ dashHeld: true }));
-    expect(state.hero.vy).toBeGreaterThan(2.5);
+    stepN(engine, state, catalog, 35, () => ({ dashHeld: true }));
+    expect(state.hero.vy).toBeGreaterThan(3.5);
     expect(state.hero.vy).toBeLessThanOrEqual(FORM_PARAMS.LEAF_WIND_VY + 0.1);
 
     // LeafCombo decays at 0.25x rate
     state.combo.count = 1;
     state.combo.timer = 2.0;
     state.hero.action = 'idle';
-    stepN(engine, state, catalog, 60); // 1.0s -> 0.25s loss instead of 1.0s
+    stepN(engine, state, catalog, 60); // 1.0s at 0.25x curve
     expect(state.combo.timer).toBeGreaterThan(1.65);
   });
 
@@ -827,11 +856,11 @@ describe('All 6 Hero Forms & Upgrades', () => {
     expect(state.hero.invulnTimer).toBeGreaterThan(1.5);
   });
 
-  it('krunk_shadow: omnidirectional 32u/s Shadow Blink + stomp ground shockwaves', () => {
+  it('krunk_shadow: vanish-strike enemy teleport + projectile clear, upward 2.5u ceiling-clamped blink & stomp shockwaves', () => {
     const room = makeRoom('shadow_lab', FLAT_ROOM_ASCII, {
       defaultSpawnX: 8,
       defaultSpawnY: 4,
-      enemies: [{ id: 'g1', archetype: 'goomba', x: 11.5, y: 1, patrolMinX: 11, patrolMaxX: 12 }],
+      enemies: [{ id: 'g1', archetype: 'goomba', x: 11.0, y: 1, patrolMinX: 10.5, patrolMaxX: 11.5 }],
     });
     const catalog = makeTestCatalog([room]);
     const engine = createSimEngine();
@@ -841,16 +870,49 @@ describe('All 6 Hero Forms & Upgrades', () => {
     state.hero.form = 'krunk_shadow';
     state.hero.grounded = false;
 
-    // Omnidirectional blink straight UP (0, 1) at 32 u/s
+    // 1. Upward 2.5u blink when no enemy is in range (g1 is at dy = -3.0 < -1.5 minDy)
+    const startY = state.hero.y;
     stepN(engine, state, catalog, 1, () => ({ dashPressed: true, moveX: 0, moveY: 1 }));
     expect(state.hero.action).toBe('shadow_blink');
-    expect(state.hero.vy).toBeCloseTo(FORM_PARAMS.SHADOW_BLINK_SPEED, 1);
+    stepN(engine, state, catalog, 7); // past 0.08s vanish -> teleports +2.5u upward!
+    expect(state.hero.y).toBeGreaterThan(startY + 2.0);
 
-    // Finish blink, then Air Stomp -> spawns dual shockwaves that kill enemy at x=11.5!
-    stepN(engine, state, catalog, 12);
-    stepN(engine, state, catalog, 1, () => ({ stompPressed: true }));
-    stepN(engine, state, catalog, 45);
+    // 2. Enemy lock-on vanish-strike teleports onto enemy within 4.5u, strikes it, clears enemy projectiles & resets air ability!
+    state.hero.x = 8.5;
+    state.hero.y = 1.5;
+    state.hero.grounded = false;
+    state.hero.abilityUsedInAir = false;
+    state.hero.action = 'fall';
+    state.projectiles.push({
+      id: 999,
+      fromHero: false,
+      kind: 'spit',
+      x: 11.0,
+      y: 1.5,
+      prevX: 11.0,
+      prevY: 1.5,
+      vx: 0,
+      vy: 0,
+      radius: 0.2,
+      ttl: 2.0,
+      homing: false,
+    });
+    stepN(engine, state, catalog, 1, () => ({ dashPressed: true }));
+    stepN(engine, state, catalog, 7);
     expect(state.enemies[0].alive).toBe(false);
+    expect(state.projectiles.some((p) => p.id === 999)).toBe(false);
+    expect(state.hero.abilityUsedInAir).toBe(false);
+
+    // 3. Air Stomp in shadow form spawns dual ground shockwaves
+    state.slowmoTimer = 0;
+    state.slowmoScale = 1.0;
+    state.hitstopTicks = 0;
+    state.hero.x = 8.0;
+    state.hero.y = 3.5;
+    state.hero.grounded = false;
+    stepN(engine, state, catalog, 1, () => ({ stompPressed: true }));
+    stepN(engine, state, catalog, 15);
+    expect(state.projectiles.some((p) => p.fromHero && p.kind === 'shockwave')).toBe(true);
   });
 });
 
@@ -973,7 +1035,7 @@ describe('Combo System, Relics, Economy, Boss & Determinism', () => {
     damageHero(sLoss, 5, 0, [], 'enemy');
     expect(sLoss.progress.crystals).toBe(950);
 
-    // 4. Magnet pulls crystal from 4.5u away + CrystallineHunger gives +35%
+    // 4. Magnet pulls crystal from 4.5u away + CrystallineHunger gives 2x crystals in Basic form
     const sMag = engine.createInitialState(catalog, {
       progress: {
         ownedRelics: ['magnet'],
@@ -984,7 +1046,7 @@ describe('Combo System, Relics, Economy, Boss & Determinism', () => {
     sMag.enemies = [];
     stepN(engine, sMag, catalog, 30);
     expect(sMag.crystals[0].collected).toBe(true);
-    expect(sMag.progress.crystals).toBe(14); // round(10 * 1.35) = 14
+    expect(sMag.progress.crystals).toBe(20); // 10 * 2.0 = 20
 
     // 5. Bandit Shorts deterministic dodge fires ~35% across trials
     const sBandit = engine.createInitialState(catalog, {
@@ -1130,7 +1192,7 @@ describe('Combo System, Relics, Economy, Boss & Determinism', () => {
     expect(FIXED_DT).toBeCloseTo(1 / 60, 8);
   });
 
-  it('verifies stompDelay (0.25s), Old Clock slowmo (0.35s @ 0.25x), Antigrav 0.5x Rock Uppercut, miniCombo bonus, and interactive props', () => {
+  it('verifies Ground Stomp (vx=0, vy=12, tongue slam, anti-spam 0.25s, fire waves), zero Basic midair Dash freeze, retroactive super-bounce, hitstop input buffering, camera deadzone, Old Clock, Antigrav Rock & props', () => {
     const room = makeRoom('extra_mechanics', [
       '####################',
       '#..................#',
@@ -1138,7 +1200,7 @@ describe('Combo System, Relics, Economy, Boss & Determinism', () => {
       '#....GGG...........#',
       '#....GGG...........#',
       '#..................#',
-      '####################',
+      '##########B#########',
     ], {
       defaultSpawnX: 12,
       defaultSpawnY: 4.5,
@@ -1155,33 +1217,106 @@ describe('Combo System, Relics, Economy, Boss & Determinism', () => {
     const catalog = makeTestCatalog([room]);
     const engine = createSimEngine();
 
-    // 1. Delayed Air Stomp in krunk_basic (dashPressed in air without Down -> 0.25s delay then -18.0)
-    const sDelay = engine.createInitialState(catalog, {
+    // 1. Midair Basic Dash does NOT freeze hero for 0.25s; Air Stomp on stompPressed is IMMEDIATE and preserves vx!
+    const sAir = engine.createInitialState(catalog, {
       progress: { ownedRelics: ['old_clock'], equippedRelics: ['old_clock'] },
     });
-    sDelay.hero.grounded = false;
-    stepN(engine, sDelay, catalog, 1, () => ({ dashPressed: true }));
-    expect(sDelay.hero.stompDelayTimer).toBeCloseTo(PHYSICS.STOMP_DELAY, 2);
-    expect(sDelay.hero.action).not.toBe('air_stomp');
-    stepN(engine, sDelay, catalog, 16); // after 0.25s snaps into air_stomp (-18.0)
-    expect(sDelay.hero.action).toBe('air_stomp');
-    expect(sDelay.hero.vy).toBe(-PHYSICS.MAX_FALL_SPEED);
+    sAir.hero.grounded = false;
+    sAir.hero.vx = 5.5;
+    stepN(engine, sAir, catalog, 1, () => ({ dashPressed: true, moveX: 1 }));
+    expect(sAir.hero.stompDelayTimer).toBe(0);
+    expect(sAir.hero.action).not.toBe('air_stomp');
+    expect(sAir.hero.vx).toBeGreaterThan(4.5);
+
+    const airEv = stepN(engine, sAir, catalog, 1, () => ({ stompPressed: true, moveX: 1 }));
+    expect(sAir.hero.action).toBe('air_stomp');
+    expect(sAir.hero.vy).toBe(-PHYSICS.MAX_FALL_SPEED);
+    expect(sAir.hero.vx).toBeGreaterThan(4.5); // 100% horizontal vx preserved!
+    expect(sAir.hero.tongueKind).toBe('air_stomp');
+    expect(airEv.some((e) => e.type === 'tongue_lash' && e.kind === 'air_stomp')).toBe(true);
 
     // 2. Old Clock activates 0.35s slowmo at 0.25x on enemy stomp bounce
-    stepN(engine, sDelay, catalog, 12);
-    expect(sDelay.enemies[0].alive).toBe(false);
-    expect(sDelay.slowmoTimer).toBeGreaterThan(0);
-    expect(sDelay.slowmoScale).toBe(0.25);
+    sAir.hero.x = 12;
+    sAir.hero.y = 2.6;
+    sAir.hero.vx = 0;
+    stepN(engine, sAir, catalog, 12);
+    expect(sAir.enemies[0].alive).toBe(false);
+    expect(sAir.slowmoTimer).toBeGreaterThan(0);
+    expect(sAir.slowmoScale).toBe(0.25);
+
+    // 2b. Ground Stomp: grounded stompPressed -> vx=0, vy=12.0, tongueKind='ground_stomp', anti-spam 0.25s, breaks floor block, Fire waves!
+    const sGs = engine.createInitialState(catalog, {
+      progress: {
+        unlockedForms: ['krunk_basic', 'krunk_fire'],
+        upgradeLevels: { StompFlame: 1 } as Record<UpgradeKey, number>,
+      },
+    });
+    sGs.enemies = [];
+    sGs.hero.form = 'krunk_fire';
+    sGs.hero.x = 10.1; // Directly above Breakable 'B' at tx=10, ty=0
+    sGs.hero.y = 1.0;
+    stepN(engine, sGs, catalog, 2); // settle grounded
+    expect(sGs.hero.grounded).toBe(true);
+    const gsEv = stepN(engine, sGs, catalog, 1, () => ({ stompPressed: true }));
+    expect(sGs.hero.action).toBe('ground_stomp');
+    expect(sGs.hero.vx).toBe(0);
+    expect(sGs.hero.vy).toBeCloseTo(PHYSICS.GROUND_STOMP_FORCE_Y, 1);
+    expect(sGs.hero.tongueKind).toBe('ground_stomp');
+    expect(gsEv.some((e) => e.type === 'ground_stomp' && e.fiery)).toBe(true);
+    expect(gsEv.some((e) => e.type === 'tongue_lash' && e.kind === 'ground_stomp')).toBe(true);
+    expect(sGs.roomTiles[0 * room.widthTiles + 10]).toBe(TileCode.Empty); // floor block smashed!
+    expect(sGs.projectiles.filter((p) => p.kind === 'fire_wave').length).toBe(2); // twin ground fire waves!
+
+    // Ground Stomp on plain solid floor sets 0.25s anti-spam stompSpamTimer
+    sGs.hero.x = 5.0;
+    sGs.hero.y = 1.0;
+    sGs.hero.vy = 0;
+    sGs.hero.grounded = true;
+    stepN(engine, sGs, catalog, 1, () => ({ stompPressed: true }));
+    expect(sGs.hero.stompSpamTimer).toBeCloseTo(PHYSICS.STOMP_DELAY, 2);
+
+    // 2c. Retroactive super-bounce forgiveness: tapping Stomp within lastEnemyHitTimer upgrades to 18.0 u/s!
+    const sRetro = engine.createInitialState(catalog);
+    sRetro.hero.x = 5.0;
+    sRetro.hero.y = 3.0;
+    sRetro.hero.grounded = false;
+    sRetro.hero.vy = 12.0;
+    sRetro.hero.lastEnemyHitTimer = 0.04;
+    stepN(engine, sRetro, catalog, 1, () => ({ stompPressed: true }));
+    expect(sRetro.hero.action).toBe('flip'); // upgraded bounce, NOT downward dive!
+    expect(sRetro.hero.vy).toBeCloseTo(18.0, 1);
+
+    // 2d. Hitstop input buffering: Jump pressed during hitstopTicks > 0 is NEVER dropped!
+    const sBuf = engine.createInitialState(catalog);
+    sBuf.enemies = [];
+    sBuf.hero.x = 5.0;
+    sBuf.hero.y = 1.0;
+    stepN(engine, sBuf, catalog, 2);
+    sBuf.hitstopTicks = 2;
+    stepN(engine, sBuf, catalog, 1, () => ({ jumpPressed: true, jumpHeld: true }));
+    expect(sBuf.hero.preJumpTimer).toBeGreaterThan(0);
+    const postHitstopEv = stepN(engine, sBuf, catalog, 2, () => ({ jumpHeld: true }));
+    expect(postHitstopEv.some((e) => e.type === 'jump' && !e.air)).toBe(true);
+
+    // 2e. Camera +-1.0u deadzone: turning in place does NOT whip camera X!
+    const camRoom = makeRoom('cam_deadzone', FLAT_ROOM_ASCII, { defaultSpawnX: 12, defaultSpawnY: 1 });
+    const camCat = makeTestCatalog([camRoom]);
+    const sCam = engine.createInitialState(camCat);
+    stepN(engine, sCam, camCat, 3);
+    const camXBeforeTurn = sCam.camera.x;
+    stepN(engine, sCam, camCat, 2, () => ({ moveX: -1 }));
+    stepN(engine, sCam, camCat, 2, () => ({ moveX: 1 }));
+    expect(Math.abs(sCam.camera.x - camXBeforeTurn)).toBeLessThan(0.15);
 
     // 3. Mini-combo rapid hit bonus within 0.15s window awards extra crystals
-    const cBefore = sDelay.progress.crystals;
+    const cBefore = sAir.progress.crystals;
     const evMini: SimEvent[] = [];
-    registerComboEnemyHit(sDelay, 14, 1, false, evMini);
-    expect(sDelay.combo.miniComboTimer).toBeCloseTo(0.15, 2);
-    registerComboEnemyHit(sDelay, 14, 1, false, evMini);
-    expect(sDelay.progress.crystals).toBeGreaterThan(cBefore);
+    registerComboEnemyHit(sAir, 14, 1, false, evMini);
+    expect(sAir.combo.miniComboTimer).toBeCloseTo(0.15, 2);
+    registerComboEnemyHit(sAir, 14, 1, false, evMini);
+    expect(sAir.progress.crystals).toBeGreaterThan(cBefore);
 
-    // 4. Antigrav halves Rock Uppercut velocity (13.0 * 0.5 = 6.5 u/s)
+    // 4. Antigrav halves Rock Uppercut velocity (13.0 * 0.5 = 6.5 u/s) AND allows horizontal steering during ascent
     const sRock = engine.createInitialState(catalog, {
       progress: { unlockedForms: ['krunk_basic', 'krunk_rock'] },
     });
@@ -1190,13 +1325,14 @@ describe('Combo System, Relics, Economy, Boss & Determinism', () => {
     sRock.hero.y = 2.5;
     sRock.hero.grounded = false;
     sRock.hero.inAntigrav = true;
-    stepN(engine, sRock, catalog, 1, () => ({ dashPressed: true, dashHeld: true }));
+    stepN(engine, sRock, catalog, 1, () => ({ dashPressed: true, dashHeld: true, moveX: 1 }));
     let peakVy = 0;
     for (let i = 0; i < 8; i++) {
-      engine.step(sRock, { ...createEmptyInputFrame(), dashHeld: true }, catalog);
+      engine.step(sRock, { ...createEmptyInputFrame(), dashHeld: true, moveX: 1 }, catalog);
       peakVy = Math.max(peakVy, sRock.hero.vy);
     }
     expect(peakVy).toBeCloseTo(FORM_PARAMS.ROCK_UPPERCUT_VY * FORM_PARAMS.ROCK_ANTIGRAV_MULT, 1);
+    expect(sRock.hero.vx).toBeGreaterThan(1.0); // Horizontal steering works during rock uppercut!
 
     // 5. Chest, Form Totem, and Teleporter interactions
     const sProps = engine.createInitialState(catalog);

@@ -74,6 +74,14 @@ export function hashState(state: SimState): number {
   h = fnvByte(h, hero.platinumShieldUsed ? 1 : 0);
   h = fnvFloat(h, hero.abilityTimer);
   h = fnvInt32(h, hero.abilityPhase);
+  h = fnvString(h, hero.tongueKind);
+  h = fnvFloat(h, hero.tongueTimer);
+  h = fnvFloat(h, hero.stompSpamTimer);
+  h = fnvFloat(h, hero.preStompTimer);
+  h = fnvFloat(h, hero.wallSlideCoyoteTimer);
+  h = fnvInt32(h, hero.wallSlideDir);
+  h = fnvByte(h, hero.wallSalivaActive ? 1 : 0);
+  h = fnvFloat(h, hero.fireImmunityTimer);
 
   // Combo state
   const combo = state.combo;

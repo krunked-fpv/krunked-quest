@@ -1,4 +1,5 @@
-import type { RoomDef, SimEvent, SimState } from '../contracts/index';
+import type { RoomDef, RoomModeType, SimEvent, SimState } from '../contracts/index';
+import { triggerCameraShake } from './camera';
 import {
   COMBO_PRESETS,
   COMBO_RULES,
@@ -8,6 +9,51 @@ import {
   getUpgradeLevel,
   hasRelic,
 } from './constants';
+
+interface CurveKey {
+  readonly t: number;
+  readonly v: number;
+}
+
+// Verified origin nonlinear comboLossCurve keyframes (normTimer -> decay rate multiplier)
+const COMBO_LOSS_CURVES: Record<RoomModeType, readonly CurveKey[]> = {
+  normal: [
+    { t: 0.0, v: 0.2 },
+    { t: 0.17, v: 0.33 },
+    { t: 0.33, v: 1.01 },
+    { t: 0.66, v: 1.51 },
+    { t: 1.0, v: 1.51 },
+  ],
+  arena: [
+    { t: 0.0, v: 0.21 },
+    { t: 0.18, v: 0.4 },
+    { t: 0.33, v: 1.01 },
+    { t: 0.66, v: 1.51 },
+    { t: 1.0, v: 1.51 },
+  ],
+  boss: [
+    { t: 0.0, v: 0.18 },
+    { t: 0.17, v: 0.33 },
+    { t: 0.33, v: 1.01 },
+    { t: 0.66, v: 1.51 },
+    { t: 1.0, v: 1.51 },
+  ],
+};
+
+function evaluateComboLossCurve(preset: RoomModeType, normTimer: number): number {
+  const keys = COMBO_LOSS_CURVES[preset];
+  const x = Math.max(0, Math.min(1, normTimer));
+  for (let i = 0; i < keys.length - 1; i++) {
+    const a = keys[i];
+    const b = keys[i + 1];
+    if (x <= b.t) {
+      const span = Math.max(1e-4, b.t - a.t);
+      const frac = (x - a.t) / span;
+      return a.v + (b.v - a.v) * frac;
+    }
+  }
+  return keys[keys.length - 1].v;
+}
 
 export function initRoomCombo(state: SimState, room: RoomDef): void {
   const preset = COMBO_PRESETS[room.mode];
@@ -86,7 +132,7 @@ export function registerComboEnemyHit(
   }
   combo.miniComboTimer = COMBO_RULES.MINI_COMBO_WINDOW;
 
-  // Check >= 95% auto-heal + RockShield restore
+  // Check >= 95% auto-heal + RockShield regeneration (even at full HP!)
   checkAutoHeal(state, events);
 
   // Check max room combo (all enemies in room cleared in one unbroken combo)
@@ -112,8 +158,7 @@ function triggerMaxRoomCombo(state: SimState, x: number, y: number, events: SimE
   // Celebratory 0.05x slowmo hitstop
   state.slowmoTimer = Math.max(state.slowmoTimer, COMBO_RULES.MAX_COMBO_HITSTOP_TICKS * FIXED_DT);
   state.slowmoScale = COMBO_RULES.MAX_COMBO_HITSTOP_SCALE;
-  state.camera.shakeTimer = Math.max(state.camera.shakeTimer, 0.25);
-  state.camera.shakeIntensity = Math.max(state.camera.shakeIntensity, 0.22);
+  triggerCameraShake(state, 0.14);
 
   if (!state.progress.clearedComboRooms.includes(state.roomId)) {
     state.progress.clearedComboRooms.push(state.roomId);
@@ -186,19 +231,6 @@ export function breakCombo(state: SimState): void {
   state.combo.miniComboCount = 0;
 }
 
-function isComboDecayPausedByAction(state: SimState): boolean {
-  const action = state.hero.action;
-  return (
-    action === 'ground_dash' ||
-    action === 'wall_dash' ||
-    action === 'fire_dash' ||
-    action === 'rock_uppercut' ||
-    action === 'volt_dive' ||
-    action === 'volt_blink' ||
-    action === 'shadow_blink'
-  );
-}
-
 export function tickCombo(state: SimState, dt: number): void {
   const combo = state.combo;
   if (combo.bannerTimer > 0) {
@@ -217,29 +249,23 @@ export function tickCombo(state: SimState, dt: number): void {
     return;
   }
 
-  // Freeze timer pauses decay
+  // Freeze timer (Maniac Crystal) or recoil pauses decay
   if (combo.freezeTimer > 0) {
     combo.freezeTimer = Math.max(0, combo.freezeTimer - dt);
     return;
   }
-
-  // Dash / form abilities pause decay
-  if (isComboDecayPausedByAction(state)) {
+  if (state.hero.recoilTimer > 0) {
     return;
   }
 
-  // Decay every 0.05s (3 ticks at 60Hz)
+  // Decay every 0.05s (3 ticks at 60Hz) using exact nonlinear comboLossCurve
   combo.decayAccum += dt;
   const interval = COMBO_RULES.DECAY_TICK_INTERVAL;
-  const preset = COMBO_PRESETS[combo.preset];
 
   while (combo.decayAccum >= interval) {
     combo.decayAccum -= interval;
-    let decayAmount = interval;
-
-    if (combo.maxTimer > 0 && combo.timer / combo.maxTimer >= preset.harderPoint) {
-      decayAmount *= SIM_RULES.HARDER_COMBO_DECAY_MULT;
-    }
+    const norm = combo.maxTimer > 0 ? combo.timer / combo.maxTimer : 0;
+    let decayAmount = interval * evaluateComboLossCurve(combo.preset, norm);
 
     if (state.hero.form === 'krunk_leaf' && getUpgradeLevel(state, 'LeafCombo') > 0) {
       decayAmount *= FORM_PARAMS.LEAF_COMBO_LOSS_UPGRADED;

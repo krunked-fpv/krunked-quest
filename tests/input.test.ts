@@ -262,13 +262,30 @@ describe('InputOrchestrator — Desktop Boot & Auto-Activating Touch', () => {
     expect(frame2.jumpHeld).toBe(true);
     expect(frame2.jumpPressed).toBe(false);
 
-    // Direct form select (Digit3 -> index 2) and WASD + Arrows dual movement
+    // Direct form select (Digit3 -> index 2), WASD + Arrows dual movement, and authentic Z/X/C bindings
+    // (KeyS is strictly Down — never fires Ground Stomp!)
     input.notifyKeyUp('Space');
     input.notifyKeyDown('KeyD');
+    input.notifyKeyDown('KeyS');
     input.notifyKeyDown('Digit3');
     const frame3 = input.pollFrame();
     expect(frame3.moveX).toBe(1);
+    expect(frame3.moveY).toBe(-1);
+    expect(frame3.stompPressed).toBe(false);
     expect(frame3.directFormIndex).toBe(2);
+
+    // Original PC Z=Jump, X=Stomp+Interact, C=Dash
+    input.notifyKeyUp('KeyD');
+    input.notifyKeyUp('KeyS');
+    input.notifyKeyUp('Digit3');
+    input.notifyKeyDown('KeyZ');
+    input.notifyKeyDown('KeyX');
+    input.notifyKeyDown('KeyC');
+    const frame4 = input.pollFrame();
+    expect(frame4.jumpPressed).toBe(true);
+    expect(frame4.stompPressed).toBe(true);
+    expect(frame4.interactPressed).toBe(true);
+    expect(frame4.dashPressed).toBe(true);
 
     overlay.dispose();
     input.dispose();
@@ -301,12 +318,12 @@ describe('InputOrchestrator — Desktop Boot & Auto-Activating Touch', () => {
     expect(fIdle.moveY).toBe(0);
     expect(input.activeDevice).toBe('touch');
 
-    // Xbox active stick (> 0.20 deadzone) + Jump (A=0) + Dash (X=2) + FormNext (RB=5)
+    // Xbox active stick (> 0.20 deadzone) + authentic Jump (A=0) + Stomp (X=2) + Dash (RB=5) + FormNext (LT=6)
     const xboxActive: VirtualGamepadSnapshot = {
       id: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e)',
       mapping: 'standard',
       axes: [0.6, -1.0, 0, 0], // stick right 0.6, stick up (-1.0 -> moveY=+1)
-      buttons: makeButtons([0, 2, 5]),
+      buttons: makeButtons([0, 2, 5, 6]),
     };
     input.injectVirtualGamepadState(xboxActive);
     const fXbox = input.pollFrame();
@@ -316,18 +333,22 @@ describe('InputOrchestrator — Desktop Boot & Auto-Activating Touch', () => {
     expect(fXbox.moveY).toBe(1);
     expect(fXbox.jumpHeld).toBe(true);
     expect(fXbox.jumpPressed).toBe(true);
+    expect(fXbox.stompHeld).toBe(true);
+    expect(fXbox.stompPressed).toBe(true);
+    expect(fXbox.interactPressed).toBe(true);
     expect(fXbox.dashHeld).toBe(true);
     expect(fXbox.dashPressed).toBe(true);
     expect(fXbox.formNextPressed).toBe(true);
     expect(input.getGlyphs()).toMatchObject({
       device: 'gamepad_xbox',
       jump: 'A',
-      dash: 'X',
-      stomp: 'B',
-      form: 'LB/RB',
+      stomp: 'X',
+      dash: 'RB/B',
+      form: 'LB/LT',
+      map: 'Y',
     });
 
-    // Switch back to touch, then activate Tesla HID gamepad using POV Hat (axis 9) & Stomp (B=1) + Pause (9)
+    // Switch back to touch, then activate Tesla HID gamepad using POV Hat (axis 9) & Stomp (X=2) + Dash (B=1) + Pause (9)
     input.injectVirtualGamepadState(null);
     input.pollFrame(); // release held state
     input.injectVirtualTouch(true);
@@ -338,7 +359,7 @@ describe('InputOrchestrator — Desktop Boot & Auto-Activating Touch', () => {
       mapping: '',
       // axis 9 = -3/7 (-0.4286) is POV Right
       axes: [0, 0, 0, 0, 0, 0, 0, 0, 0, -3 / 7],
-      buttons: makeButtons([1, 9]),
+      buttons: makeButtons([1, 2, 9]),
     };
     input.injectVirtualGamepadState(teslaPovRight);
     const fTesla = input.pollFrame();
@@ -348,39 +369,44 @@ describe('InputOrchestrator — Desktop Boot & Auto-Activating Touch', () => {
     expect(fTesla.moveY).toBe(0);
     expect(fTesla.stompHeld).toBe(true);
     expect(fTesla.stompPressed).toBe(true);
+    expect(fTesla.dashHeld).toBe(true);
+    expect(fTesla.dashPressed).toBe(true);
     expect(fTesla.pausePressed).toBe(true);
     expect(input.getGlyphs()).toMatchObject({
       device: 'gamepad_tesla',
       jump: 'A',
-      dash: 'X',
-      stomp: 'B',
-      form: 'LB/RB',
+      stomp: 'X',
+      dash: 'RB/B',
+      form: 'LB/LT',
     });
 
-    // Tesla neutral POV hat (3.2857) + raw HID D-pad axes 6 & 7 (Left + Down)
+    // Tesla neutral POV hat (3.2857) + raw HID D-pad axes 6 & 7 (Left + Down) + Map (Y=3)
     const teslaRawAxes: VirtualGamepadSnapshot = {
       id: 'Tesla Bluetooth Gamepad',
       mapping: '',
       axes: [0, 0, 0, 0, 0, 0, -1, 1, 0, 3.2857],
-      buttons: makeButtons([]),
+      buttons: makeButtons([3]),
     };
     input.injectVirtualGamepadState(teslaRawAxes);
     const fTeslaRaw = input.pollFrame();
     expect(fTeslaRaw.moveX).toBe(-1);
     expect(fTeslaRaw.moveY).toBe(-1);
+    expect(fTeslaRaw.mapPressed).toBe(true);
 
-    // Verify PS and Switch glyphs
+    // Verify PS and Switch authentic glyphs
     expect(getGlyphsForDevice('gamepad_ps')).toMatchObject({
       jump: '✕',
-      dash: '□',
-      stomp: '○',
-      form: 'L1/R1',
+      stomp: '□',
+      dash: 'R1/○',
+      form: 'L1/L2',
+      map: '△',
     });
     expect(getGlyphsForDevice('gamepad_switch')).toMatchObject({
       jump: 'B',
-      dash: 'Y',
-      stomp: 'A',
-      form: 'L/R',
+      stomp: 'Y',
+      dash: 'R/A',
+      form: 'L/ZL',
+      map: 'X',
     });
 
     input.dispose();

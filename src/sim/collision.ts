@@ -7,6 +7,7 @@ import {
   type SimEvent,
   type SimState,
 } from '../contracts/index';
+import { triggerCameraShake } from './camera';
 import { PHYSICS, SIM_RULES } from './constants';
 
 export interface BlastCircle {
@@ -77,18 +78,24 @@ export function aabbOverlap(
 }
 
 function canBreakTileHoriz(action: HeroActionState, tile: TileCode): boolean {
-  if (tile === TileCode.Breakable || tile === TileCode.Explosive) {
+  if (tile === TileCode.Breakable || tile === TileCode.Explosive || tile === TileCode.SecretWall) {
     return (
       action === 'ground_dash' ||
       action === 'wall_dash' ||
       action === 'fire_dash' ||
+      action === 'volt_dive' ||
       action === 'volt_blink' ||
       action === 'shadow_blink' ||
       action === 'rock_uppercut'
     );
   }
   if (tile === TileCode.StoneOverhead) {
-    return action === 'rock_uppercut';
+    return (
+      action === 'rock_uppercut' ||
+      action === 'fire_dash' ||
+      action === 'volt_dive' ||
+      action === 'volt_blink'
+    );
   }
   return false;
 }
@@ -97,7 +104,7 @@ function canBreakTileUp(action: HeroActionState, tile: TileCode): boolean {
   if (tile === TileCode.StoneOverhead) {
     return action === 'rock_uppercut';
   }
-  if (tile === TileCode.Breakable || tile === TileCode.Explosive) {
+  if (tile === TileCode.Breakable || tile === TileCode.Explosive || tile === TileCode.SecretWall) {
     return (
       action === 'rock_uppercut' ||
       action === 'fire_dash' ||
@@ -109,9 +116,11 @@ function canBreakTileUp(action: HeroActionState, tile: TileCode): boolean {
 }
 
 function canBreakTileDown(action: HeroActionState, tile: TileCode): boolean {
-  if (tile === TileCode.Breakable || tile === TileCode.Explosive) {
+  if (tile === TileCode.Breakable || tile === TileCode.Explosive || tile === TileCode.SecretWall) {
     return (
       action === 'air_stomp' ||
+      action === 'ground_stomp' ||
+      action === 'volt_dive' ||
       action === 'volt_blink' ||
       action === 'shadow_blink'
     );
@@ -147,7 +156,8 @@ export function breakTileAt(
     tile !== TileCode.Breakable &&
     tile !== TileCode.StoneOverhead &&
     tile !== TileCode.Crumble &&
-    tile !== TileCode.Explosive
+    tile !== TileCode.Explosive &&
+    tile !== TileCode.SecretWall
   ) {
     return false;
   }
@@ -164,8 +174,7 @@ export function breakTileAt(
 
   if (explosive) {
     explosions.push({ x: cx, y: cy, radius: SIM_RULES.EXPLOSIVE_RADIUS });
-    state.camera.shakeTimer = Math.max(state.camera.shakeTimer, 0.24);
-    state.camera.shakeIntensity = Math.max(state.camera.shakeIntensity, 0.28);
+    triggerCameraShake(state, 0.16);
     breakTilesInRadius(state, room, cx, cy, SIM_RULES.EXPLOSIVE_RADIUS, events, explosions);
   }
 
@@ -200,6 +209,148 @@ export function breakTilesInRadius(
     }
   }
   return brokeAny;
+}
+
+/**
+ * Downward dual-ray floor smash for Ground Stomp & Air Stomp landing.
+ * Breaks Breakable, Explosive, Crumble & SecretWall tiles underfoot and triggers nearby target switches.
+ * Returns true if at least one interactable tile or switch was triggered.
+ */
+export function smashFloorUnderHero(
+  state: SimState,
+  room: RoomDef,
+  events: SimEvent[],
+  explosions: BlastCircle[],
+): boolean {
+  const hero = state.hero;
+  const cx = hero.x + hero.width * 0.5;
+  const probeY = hero.y - 0.15;
+  const ty = Math.floor(probeY);
+  const probesX = [cx - 0.35, cx, cx + 0.35];
+  let hitAny = false;
+
+  for (let i = 0; i < probesX.length; i++) {
+    const tx = Math.floor(probesX[i]);
+    const tile = getTileAt(state.roomTiles, room.widthTiles, room.heightTiles, tx, ty);
+    if (
+      tile === TileCode.Breakable ||
+      tile === TileCode.Explosive ||
+      tile === TileCode.Crumble ||
+      tile === TileCode.SecretWall
+    ) {
+      if (breakTileAt(state, room, tx, ty, events, explosions)) {
+        hitAny = true;
+      }
+    }
+  }
+
+  // Also trigger any target_switch right underfoot during stomp
+  for (let i = 0; i < room.props.length; i++) {
+    const prop = room.props[i];
+    if (prop.kind !== 'target_switch' || !prop.targetId) continue;
+    const px = prop.x + (prop.width ?? 1) * 0.5;
+    const py = prop.y + (prop.height ?? 1) * 0.5;
+    if (
+      Math.abs(cx - px) <= 1.15 &&
+      Math.abs(hero.y - py) <= 1.25 &&
+      !state.openedDoors.includes(prop.targetId)
+    ) {
+      state.openedDoors.push(prop.targetId);
+      hitAny = true;
+    }
+  }
+
+  return hitAny;
+}
+
+/**
+ * Downward scoop active during Air Stomp descent (destroys fragile/breakable/explosive tiles ahead).
+ */
+export function sweepStompBlockDestroyer(
+  state: SimState,
+  room: RoomDef,
+  events: SimEvent[],
+  explosions: BlastCircle[],
+): boolean {
+  const hero = state.hero;
+  const cx = hero.x + hero.width * 0.5;
+  const halfW = SIM_RULES.STOMP_BLOCK_DESTROYER_HALF_W;
+  const minTx = Math.max(0, Math.floor(cx - halfW));
+  const maxTx = Math.min(room.widthTiles - 1, Math.floor(cx + halfW));
+  const minTy = Math.max(0, Math.floor(hero.y - SIM_RULES.STOMP_BLOCK_DESTROYER_DEPTH));
+  const maxTy = Math.min(room.heightTiles - 1, Math.floor(hero.y + 0.05));
+
+  let broke = false;
+  for (let ty = minTy; ty <= maxTy; ty++) {
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      const tile = getTileAt(state.roomTiles, room.widthTiles, room.heightTiles, tx, ty);
+      if (
+        tile === TileCode.Breakable ||
+        tile === TileCode.Explosive ||
+        tile === TileCode.SecretWall
+      ) {
+        if (breakTileAt(state, room, tx, ty, events, explosions)) {
+          broke = true;
+        }
+      }
+    }
+  }
+  return broke;
+}
+
+/**
+ * Swept ceiling/wall-safe teleport for Shadow Form vanish strike & blink.
+ * Never embeds hero inside solid tiles or closed doors.
+ */
+export function linecastSafeTeleport(
+  state: SimState,
+  room: RoomDef,
+  targetX: number,
+  targetY: number,
+): { x: number; y: number } {
+  const hero = state.hero;
+  const w = hero.width;
+  const h = hero.height;
+  const rw = room.widthTiles;
+  const rh = room.heightTiles;
+  const clampedX = Math.max(0.05, Math.min(rw - w - 0.05, targetX));
+  const clampedY = Math.max(0.05, Math.min(rh - h - 0.05, targetY));
+
+  const dx = clampedX - hero.x;
+  const dy = clampedY - hero.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-4) {
+    return { x: hero.x, y: hero.y };
+  }
+
+  const doors = getBlockingDoors(state, room);
+  const steps = Math.max(2, Math.ceil(dist / 0.15));
+  let safeX = hero.x;
+  let safeY = hero.y;
+
+  for (let s = 1; s <= steps; s++) {
+    const frac = s / steps;
+    const candX = hero.x + dx * frac;
+    const candY = hero.y + dy * frac;
+    if (overlapsAnySolidTile(state.roomTiles, rw, rh, candX, candY, w, h)) {
+      break;
+    }
+    let blockedByDoor = false;
+    for (let d = 0; d < doors.length; d++) {
+      const door = doors[d];
+      if (aabbOverlap(candX, candY, w, h, door.x, door.y, door.width ?? 1, door.height ?? 2)) {
+        blockedByDoor = true;
+        break;
+      }
+    }
+    if (blockedByDoor) {
+      break;
+    }
+    safeX = candX;
+    safeY = candY;
+  }
+
+  return { x: safeX, y: safeY };
 }
 
 function overlapsAnySolidTile(
@@ -327,6 +478,11 @@ export function moveHeroWithCollision(
         let blocked = false;
         for (let ty = minTy; ty <= maxTy; ty++) {
           const tile = getTileAt(tiles, rw, rh, rightTx, ty);
+          if (tile === TileCode.SecretWall) {
+            breakTileAt(state, room, rightTx, ty, events, result.explosions);
+            result.brokeTile = true;
+            continue;
+          }
           if (!isSolidTile(tile)) continue;
           if (canBreakTileHoriz(hero.action, tile)) {
             breakTileAt(state, room, rightTx, ty, events, result.explosions);
@@ -349,6 +505,11 @@ export function moveHeroWithCollision(
         let blocked = false;
         for (let ty = minTy; ty <= maxTy; ty++) {
           const tile = getTileAt(tiles, rw, rh, leftTx, ty);
+          if (tile === TileCode.SecretWall) {
+            breakTileAt(state, room, leftTx, ty, events, result.explosions);
+            result.brokeTile = true;
+            continue;
+          }
           if (!isSolidTile(tile)) continue;
           if (canBreakTileHoriz(hero.action, tile)) {
             breakTileAt(state, room, leftTx, ty, events, result.explosions);
@@ -403,6 +564,11 @@ export function moveHeroWithCollision(
 
         for (let tx = minTx; tx <= maxTx; tx++) {
           const tile = getTileAt(tiles, rw, rh, tx, topTy);
+          if (tile === TileCode.SecretWall) {
+            breakTileAt(state, room, tx, topTy, events, result.explosions);
+            result.brokeTile = true;
+            continue;
+          }
           if (!isSolidTile(tile)) continue;
           if (canBreakTileUp(hero.action, tile)) {
             breakTileAt(state, room, tx, topTy, events, result.explosions);
@@ -422,7 +588,6 @@ export function moveHeroWithCollision(
           let nudged = false;
           const nudgeMax = PHYSICS.CORNER_NUDGE + 1e-4;
 
-          // Case 1: Only right corner clips a ceiling tile -> nudge hero left
           if (firstBlockedTx === lastBlockedTx) {
             const overlapRight = hero.x + w - firstBlockedTx;
             const overlapLeft = firstBlockedTx + 1 - hero.x;
@@ -469,6 +634,12 @@ export function moveHeroWithCollision(
 
         for (let tx = minTx; tx <= maxTx; tx++) {
           const tile = getTileAt(tiles, rw, rh, tx, botTy);
+
+          if (tile === TileCode.SecretWall) {
+            breakTileAt(state, room, tx, botTy, events, result.explosions);
+            result.brokeTile = true;
+            continue;
+          }
 
           if (tile === TileCode.OneWay) {
             const tileTop = botTy + 1;
@@ -627,7 +798,7 @@ export function detectAdjacentWall(
   const tiles = state.roomTiles;
   const rw = room.widthTiles;
   const rh = room.heightTiles;
-  const probe = 0.06;
+  const probe = 0.07;
   const minTy = Math.floor(hero.y + 0.1);
   const maxTy = Math.floor(hero.y + hero.height - 0.1);
 
@@ -655,6 +826,23 @@ export function detectAdjacentWall(
   if (leftHit) return -1;
   if (rightHit) return 1;
   return 0;
+}
+
+/**
+ * Checks whether the adjacent wall on side `wallDir` consists of crumble/fragile tiles
+ * (used to suppress wall-slide saliva trail on crumbling walls).
+ */
+export function isAdjacentWallCrumble(
+  state: SimState,
+  room: RoomDef,
+  wallDir: -1 | 1,
+): boolean {
+  const hero = state.hero;
+  const probe = 0.07;
+  const tx = wallDir < 0 ? Math.floor(hero.x - probe) : Math.floor(hero.x + hero.width + probe);
+  const midTy = Math.floor(hero.y + hero.height * 0.5);
+  const tile = getTileAt(state.roomTiles, room.widthTiles, room.heightTiles, tx, midTy);
+  return tile === TileCode.Crumble;
 }
 
 function senseHeroZones(state: SimState, room: RoomDef, result: MoveResult): void {
@@ -752,7 +940,7 @@ function senseHeroZones(state: SimState, room: RoomDef, result: MoveResult): voi
 }
 
 /**
- * Simple swept collision for patrolling ground enemies and dropped crystals.
+ * Simple swept collision for patrolling ground enemies, dropped crystals, and ground waves.
  */
 export function isTileSolidOrOneWayAt(
   tiles: Uint8Array,

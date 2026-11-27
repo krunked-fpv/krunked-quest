@@ -54,7 +54,7 @@ import {
   tickGhostShipMode,
   tickTimeAttack,
 } from './modes';
-import { damageHero, stepHeroPhysics } from './physics';
+import { bufferInputsDuringHitstop, damageHero, stepHeroPhysics } from './physics';
 
 function createDefaultProgress(partial?: Partial<ProgressState>): ProgressState {
   const upgradeLevels = createEmptyUpgradeLevels();
@@ -328,6 +328,20 @@ function loadRoomIntoState(
   hero.abilityUsedInAir = false;
   hero.voltTargetId = null;
   hero.platinumShieldUsed = false;
+  hero.tongueKind = 'none';
+  hero.tongueTimer = 0;
+  hero.tongueDuration = 0;
+  hero.tongueOriginX = sx;
+  hero.tongueOriginY = sy;
+  hero.tongueDirX = 0;
+  hero.tongueDirY = -1;
+  hero.stompSpamTimer = 0;
+  hero.preStompTimer = 0;
+  hero.wallSlideCoyoteTimer = 0;
+  hero.wallSlideDir = 0;
+  hero.wallSalivaActive = false;
+  hero.wallSalivaTopY = sy;
+  hero.fireImmunityTimer = 0;
   hero.maxHp = computeMaxHp(state);
   hero.maxAirJumps = computeMaxAirJumps(state);
   hero.jumpsRemaining = hero.maxAirJumps;
@@ -489,8 +503,19 @@ function updateProjectiles(
       continue;
     }
 
-    // Solid tile stop (shockwaves glide along ground)
-    if (p.kind !== 'shockwave') {
+    // Solid tile & ledge checks (shockwaves glide along ground; fire_waves hug floor & stop at walls/ledges)
+    if (p.kind === 'fire_wave') {
+      const dir = p.vx >= 0 ? 1 : -1;
+      const aheadTx = Math.floor(p.x + dir * 0.45);
+      const bodyTy = Math.floor(p.y);
+      const floorTy = Math.floor(p.y - 0.55);
+      if (isSolidTile(getTileAt(state.roomTiles, room.widthTiles, room.heightTiles, aheadTx, bodyTy))) {
+        continue;
+      }
+      if (!isTileSolidOrOneWayAt(state.roomTiles, room.widthTiles, room.heightTiles, aheadTx, floorTy)) {
+        continue;
+      }
+    } else if (p.kind !== 'shockwave') {
       const tx = Math.floor(p.x);
       const ty = Math.floor(p.y);
       if (isSolidTile(getTileAt(state.roomTiles, room.widthTiles, room.heightTiles, tx, ty))) {
@@ -504,6 +529,7 @@ function updateProjectiles(
       for (let j = 0; j < enemyCount; j++) {
         const e = state.enemies[j];
         if (!e.alive) continue;
+        if (p.kind === 'fire_wave' && e.hitFlashTimer > 0) continue;
         if (
           aabbOverlap(
             p.x - p.radius,
@@ -516,8 +542,8 @@ function updateProjectiles(
             e.height,
           )
         ) {
-          damageEnemy(state, e, 2, catalog, room, events);
-          if (p.kind !== 'shockwave') {
+          damageEnemy(state, e, p.kind === 'fire_wave' ? 1 : 2, catalog, room, events);
+          if (p.kind !== 'shockwave' && p.kind !== 'fire_wave') {
             consumed = true;
             break;
           }
@@ -942,9 +968,10 @@ export function createSimEngine(): ISimEngine {
 
       const room = catalog.rooms.get(state.roomId) ?? catalog.getRoom(catalog.startRoomId);
 
-      // Hitstop freeze frames
+      // Hitstop freeze frames — buffer inputs so hitstop NEVER eats jump/dash/stomp/form presses!
       if (state.hitstopTicks > 0) {
         state.hitstopTicks -= 1;
+        bufferInputsDuringHitstop(state, input, events);
         updateCamera(state, room, FIXED_DT);
         return events;
       }
@@ -1016,6 +1043,8 @@ export function createSimEngine(): ISimEngine {
         dt,
         heroOut.explosions,
         heroOut.completedVoltTargetId,
+        heroOut.completedShadowTargetId,
+        heroOut.groundStompHitbox,
         heroOut.evilRingTriggered,
         events,
       );
@@ -1027,6 +1056,8 @@ export function createSimEngine(): ISimEngine {
         dt,
         heroOut.explosions,
         heroOut.completedVoltTargetId,
+        heroOut.completedShadowTargetId,
+        heroOut.groundStompHitbox,
         events,
       );
       updateProjectiles(state, room, catalog, dt, events);

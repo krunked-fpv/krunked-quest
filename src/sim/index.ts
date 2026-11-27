@@ -33,9 +33,11 @@ export {
   detectAdjacentWall,
   getTileAt,
   isSolidTile,
+  linecastSafeTeleport,
   moveHeroWithCollision,
+  smashFloorUnderHero,
 } from './collision';
-export { snapCameraToHero, updateCamera } from './camera';
+export { snapCameraToHero, triggerCameraShake, updateCamera } from './camera';
 export {
   breakCombo,
   initRoomCombo,
@@ -43,5 +45,10 @@ export {
   registerComboEnemyHit,
   tickCombo,
 } from './combo';
-export { findVoltConeTarget, switchHeroForm } from './forms';
-export { computeEnemyBounceVy, damageHero, isHeroInvulnerable } from './physics';
+export { findShadowTarget, findVoltConeTarget, spawnFireStompWaves, switchHeroForm } from './forms';
+export {
+  bufferInputsDuringHitstop,
+  computeEnemyBounceVy,
+  damageHero,
+  isHeroInvulnerable,
+} from './physics';
