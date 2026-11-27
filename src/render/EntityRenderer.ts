@@ -1237,6 +1237,11 @@ export class EntityRenderer {
       return;
     }
 
+    // Suppress procedural smear bars when origin Custom Pack hero clips are active
+    if (customPack && isDrawable(customPack.getHeroSheet(hero.form))) {
+      return;
+    }
+
     if (act === 'ground_dash' || act === 'wall_dash') {
       const dir = -hero.facing;
       for (let s = 0; s < 3; s++) {

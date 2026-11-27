@@ -345,10 +345,18 @@ export class BossRenderer {
           boss.id === 'nightmare_sovereign';
         const hover = isFloating ? Math.round(Math.sin(timeSec * 3.4) * 3) : 0;
 
-        // Native 1:1 pixel dimensions when manifest SpriteFrameRects exist; clamped fallback for legacy packs
+        // Native 1:1 pixel dimensions when manifest SpriteFrameRects exist;
+        // scale down oversized arena bosses (e.g. electro_sphinx 244x251 -> 148x152) to fit viewport cleanly!
         let dw = this.slice.sw;
         let dh = this.slice.sh;
-        if (!this.slice.hasManifestRect) {
+        if (this.slice.hasManifestRect) {
+          const maxManifestH = 152;
+          if (dh > maxManifestH) {
+            const s = maxManifestH / dh;
+            dw = Math.max(32, Math.round(dw * s));
+            dh = maxManifestH;
+          }
+        } else {
           const targetW = Math.round(boss.width * PPU * 1.15);
           const targetH = Math.round(boss.height * PPU * 1.15);
           const maxBound = Math.max(targetW, targetH);
@@ -365,17 +373,26 @@ export class BossRenderer {
         }
 
         const useCenterAnchor = this.slice.hasManifestRect ? this.slice.pivotY <= 0.65 : isFloating;
-        ctx.save();
-        if (useCenterAnchor) {
-          ctx.translate(cx, cy + hover);
-        } else {
-          ctx.translate(cx, footY + hover);
+        const anchorY = useCenterAnchor ? cy + hover : footY + hover;
+        let drawTop = anchorY - Math.round(dh * this.slice.pivotY);
+        const minTop = 18;
+        if (drawTop < minTop) {
+          drawTop = minTop;
         }
+        if (isFloating) {
+          const maxTop = Math.max(minTop, VIEWPORT_H - 38 - dh);
+          if (drawTop > maxTop) {
+            drawTop = maxTop;
+          }
+        }
+        const visualCy = drawTop + (dh >> 1);
+
+        ctx.save();
+        ctx.translate(cx, drawTop);
         if (boss.facing < 0 && boss.id !== 'primal_eye') {
           ctx.scale(-1, 1);
         }
         const dx = -Math.round(dw * this.slice.pivotX);
-        const dy = -Math.round(dh * this.slice.pivotY);
         drawSpriteRect(
           ctx,
           customBoss,
@@ -384,40 +401,44 @@ export class BossRenderer {
           this.slice.sw,
           this.slice.sh,
           dx,
-          dy,
+          0,
           dw,
           dh,
           flash,
         );
         ctx.restore();
 
-        // Origin boss satellite parts (`boss/primal_eye_iris`, `boss/primal_eye_spike`, `boss/electro_sphinx_*`)
+        // Origin boss satellite parts (`boss/primal_eye_iris` inside top sclera on idle, `boss/primal_eye_spike`, `boss/electro_sphinx_shield`)
         if (boss.id === 'primal_eye') {
-          const customIris = customPack.getSprite('boss/primal_eye_iris');
-          if (isDrawable(customIris)) {
-            const heroCx = state.hero.x + state.hero.width * 0.5;
-            const heroCy = state.hero.y + state.hero.height * 0.5;
-            const bossCx = wx + boss.width * 0.5;
-            const bossCy = wy + boss.height * 0.5;
-            const ddx = heroCx - bossCx;
-            const ddy = heroCy - bossCy;
-            const dist = Math.hypot(ddx, ddy) || 1;
-            const lx = Math.round((ddx / dist) * 9);
-            const ly = Math.round((-ddy / dist) * 7);
-            resolveCustomFrame(customPack, 'boss/primal_eye_iris', customIris, timeSec, 8, true, this.slice);
-            drawSpriteRect(
-              ctx,
-              customIris,
-              this.slice.sx,
-              this.slice.sy,
-              this.slice.sw,
-              this.slice.sh,
-              cx + lx - (this.slice.sw >> 1),
-              cy + hover + ly - (this.slice.sh >> 1),
-              this.slice.sw,
-              this.slice.sh,
-              flash,
-            );
+          // Only draw tracking iris inside the blank white top sclera socket during open-socket idle frames!
+          if (clipCands === BOSS_CLIPS_IDLE) {
+            const customIris = customPack.getSprite('boss/primal_eye_iris');
+            if (isDrawable(customIris)) {
+              const heroCx = state.hero.x + state.hero.width * 0.5;
+              const heroCy = state.hero.y + state.hero.height * 0.5;
+              const bossCx = wx + boss.width * 0.5;
+              const bossCy = wy + boss.height * 0.5;
+              const ddx = heroCx - bossCx;
+              const ddy = heroCy - bossCy;
+              const dist = Math.hypot(ddx, ddy) || 1;
+              const lx = Math.round((ddx / dist) * 4);
+              const ly = Math.round((-ddy / dist) * 3);
+              const socketY = drawTop + Math.round(dh * 0.16);
+              resolveCustomFrame(customPack, 'boss/primal_eye_iris', customIris, timeSec, 8, true, this.slice);
+              drawSpriteRect(
+                ctx,
+                customIris,
+                this.slice.sx,
+                this.slice.sy,
+                this.slice.sw,
+                this.slice.sh,
+                cx + lx - (this.slice.sw >> 1),
+                socketY + ly - (this.slice.sh >> 1),
+                this.slice.sw,
+                this.slice.sh,
+                flash,
+              );
+            }
           }
           const spikeKey = customPack.getSprite('boss/primal_eye_spike')
             ? 'boss/primal_eye_spike'
@@ -431,7 +452,7 @@ export class BossRenderer {
             for (let p = 0; p < podCount; p++) {
               const ang = timeSec * orbitSpd + (p / podCount) * TWO_PI;
               const px = Math.round(cx + Math.cos(ang) * orbitR);
-              const py = Math.round(cy + hover + Math.sin(ang) * orbitR * 0.76);
+              const py = Math.round(visualCy + Math.sin(ang) * orbitR * 0.76);
               drawSpriteRect(
                 ctx,
                 customPod,
@@ -448,23 +469,6 @@ export class BossRenderer {
             }
           }
         } else if (boss.id === 'electro_sphinx') {
-          const customHead = customPack.getSprite('boss/electro_sphinx_head');
-          if (isDrawable(customHead)) {
-            resolveCustomFrame(customPack, 'boss/electro_sphinx_head', customHead, timeSec, 8, true, this.slice);
-            drawSpriteRect(
-              ctx,
-              customHead,
-              this.slice.sx,
-              this.slice.sy,
-              this.slice.sw,
-              this.slice.sh,
-              cx - (this.slice.sw >> 1),
-              cy + hover - (dh >> 1) - (this.slice.sh >> 2),
-              this.slice.sw,
-              this.slice.sh,
-              flash,
-            );
-          }
           if (boss.shieldActive) {
             const customShield = customPack.getSprite('boss/electro_sphinx_shield');
             if (isDrawable(customShield)) {
@@ -476,7 +480,7 @@ export class BossRenderer {
                 this.slice.sw,
                 this.slice.sh,
                 cx - (this.slice.sw >> 1),
-                cy + hover - (this.slice.sh >> 1),
+                visualCy - (this.slice.sh >> 1),
                 this.slice.sw,
                 this.slice.sh,
               );
@@ -1861,23 +1865,18 @@ export class BossRenderer {
       const pw = Math.max(16, Math.round(p.width * PPU));
       const ph = Math.max(12, Math.round(p.height * PPU));
 
-      // Vertical arcane levitation tether column rising from arena floor
-      ctx.globalAlpha = pulse * 0.24;
+      // Subtle vertical arcane levitation tether column rising from arena floor
+      ctx.globalAlpha = pulse * 0.14;
       ctx.fillStyle = primary;
-      ctx.fillRect(sx + (pw >> 1) - 3, sy + ph, 6, Math.max(0, VIEWPORT_H - (sy + ph)));
+      ctx.fillRect(sx + (pw >> 1) - 2, sy + ph, 4, Math.max(0, VIEWPORT_H - (sy + ph)));
 
-      // Glowing morph-phase energy outline around platform
-      ctx.globalAlpha = pulse * 0.9;
-      ctx.fillStyle = primary;
-      ctx.fillRect(sx - 2, sy - 2, pw + 4, 2);
-      ctx.fillRect(sx - 2, sy + ph, pw + 4, 2);
-      ctx.fillRect(sx - 2, sy, 2, ph);
-      ctx.fillRect(sx + pw, sy, 2, ph);
-
-      // Corner rune diamonds
+      // Delicate corner rune pips (no raw wireframe boxes covering platform art!)
+      ctx.globalAlpha = pulse * 0.72;
       ctx.fillStyle = secondary;
-      ctx.fillRect(sx - 3, sy - 3, 3, 3);
-      ctx.fillRect(sx + pw, sy - 3, 3, 3);
+      ctx.fillRect(sx - 2, sy - 2, 3, 2);
+      ctx.fillRect(sx + pw - 1, sy - 2, 3, 2);
+      ctx.fillRect(sx - 2, sy + ph, 3, 2);
+      ctx.fillRect(sx + pw - 1, sy + ph, 3, 2);
     }
 
     // 2. Ambient morphing arena floor & pillar energy glyphs scaling with arenaMorphPhase (1..3)
