@@ -100,9 +100,16 @@ export class PixelRenderer implements IPixelRenderer {
       this.prevTimeSec < 0 ? 1 / 60 : Math.max(0, Math.min(0.05, timeSec - this.prevTimeSec));
     this.prevTimeSec = timeSec;
 
-    // Animated 16-bit pixel backdrop on Title screen
+    // Active Custom Pack overlay (seamlessly falls back to ProceduralPixelAtlas per key)
+    const activePack =
+      this.packManager && this.packManager.customPackEnabled && settings.useCustomPack
+        ? this.packManager
+        : null;
+
+    // Animated 16-bit pixel backdrop on Title screen (delegates 4-layer parallax to TileRenderer!)
     if (screenMode === 'title') {
-      this.hudRenderer.renderTitleBackdrop(ctx, this.atlas, timeSec);
+      this.tileRenderer.renderParallax(ctx, 'TDM', timeSec * 1.4, 0, timeSec, this.atlas, activePack);
+      this.hudRenderer.renderTitleBackdrop(ctx, this.atlas, timeSec, activePack, true);
       return;
     }
 
@@ -136,9 +143,11 @@ export class PixelRenderer implements IPixelRenderer {
         const act = state.hero.action;
         const intense =
           act === 'fire_dash' ||
+          act === 'ground_stomp' ||
           act === 'ground_dash' ||
           act === 'wall_dash' ||
           act === 'air_stomp' ||
+          act === 'flip' ||
           act === 'rock_uppercut' ||
           act === 'volt_dive' ||
           act === 'volt_blink' ||
@@ -177,15 +186,10 @@ export class PixelRenderer implements IPixelRenderer {
     const camX = (Math.round(rawCamX * PPU) + shakePxX) / PPU;
     const camY = (Math.round(rawCamY * PPU) + shakePxY) / PPU;
 
-    // Active Custom Pack overlay (seamlessly falls back to ProceduralPixelAtlas per key)
-    const activePack =
-      this.packManager && this.packManager.customPackEnabled && settings.useCustomPack
-        ? this.packManager
-        : null;
-
-    // 1. 3-Layer atmospheric pixel parallax backdrop + bespoke biome midground effects
-    this.tileRenderer.renderParallax(ctx, state.biome, camX, camY, timeSec, this.atlas);
-    this.biomeRenderer.renderMidground(ctx, state, room, camX, camY, timeSec);
+    // 1. Multi-layer pixel parallax backdrop (origin Custom Pack or Built-In) + biome midground
+    this.tileRenderer.renderParallax(ctx, state.biome, camX, camY, timeSec, this.atlas, activePack);
+    const customBgActive = this.tileRenderer.hasCustomParallax(state.biome, activePack);
+    this.biomeRenderer.renderMidground(ctx, state, room, camX, camY, timeSec, customBgActive);
 
     // 2. World pass (with optional crisp arena zoom centered on viewport)
     const zoom = state.camera.zoom;
@@ -241,15 +245,15 @@ export class PixelRenderer implements IPixelRenderer {
       this.bossRenderer.renderForeground(ctx, state, activeBoss, camX, camY, alpha, timeSec);
     }
 
-    this.particles.render(ctx, camX, camY, this.font);
+    this.particles.render(ctx, camX, camY, this.font, this.atlas, activePack);
 
     if (zoomed) {
       ctx.restore();
       ctx.imageSmoothingEnabled = false;
     }
 
-    // 2.5 Bespoke biome foreground atmospheric pass (sunbeams/spores/embers/sandstorm/swells/hazard pulses)
-    this.biomeRenderer.renderForeground(ctx, state, room, camX, camY, timeSec);
+    // 2.5 Bespoke biome foreground atmospheric pass (dials back gracefully when origin BG is active)
+    this.biomeRenderer.renderForeground(ctx, state, room, camX, camY, timeSec, customBgActive);
 
     // 3. Brief subtle white flash overlay on max-combo hitstop celebration
     if (state.hitstopTicks > 14 && state.combo.bannerTimer > 0) {
@@ -257,8 +261,8 @@ export class PixelRenderer implements IPixelRenderer {
       ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
     }
 
-    // 4. Crisp 576x324 Pixel-Art HUD
-    this.hudRenderer.renderHud(ctx, state, catalog, this.atlas, this.font, glyphs, screenMode, timeSec);
+    // 4. Crisp 576x324 Pixel-Art HUD (with origin HUD sprites when Custom Pack is active!)
+    this.hudRenderer.renderHud(ctx, state, catalog, this.atlas, this.font, glyphs, screenMode, timeSec, activePack);
   }
 
   public dispose(): void {
