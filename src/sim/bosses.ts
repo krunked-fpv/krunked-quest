@@ -1571,6 +1571,8 @@ export function updateBossAndCombat(
   dt: number,
   explosions: BlastCircle[],
   completedVoltTargetId: string | null,
+  completedShadowTargetId: string | null,
+  groundStompHitbox: { x: number; y: number; w: number; h: number } | null,
   events: SimEvent[],
 ): void {
   const boss = state.boss;
@@ -1590,6 +1592,30 @@ export function updateBossAndCombat(
 
   // Apply completed Volt Blink hit on boss
   if (completedVoltTargetId && boss.id === completedVoltTargetId) {
+    damageBoss(state, boss, 2, catalog, room, events, true);
+    if (boss.defeated) return;
+  }
+
+  // Apply completed Shadow vanish-strike hit on boss
+  if (completedShadowTargetId && boss.id === completedShadowTargetId) {
+    damageBoss(state, boss, 2, catalog, room, events, true);
+    if (boss.defeated) return;
+  }
+
+  // Apply Ground Stomp foot slam hitbox on boss
+  if (
+    groundStompHitbox &&
+    aabbOverlap(
+      groundStompHitbox.x,
+      groundStompHitbox.y,
+      groundStompHitbox.w,
+      groundStompHitbox.h,
+      boss.x,
+      boss.y,
+      boss.width,
+      boss.height,
+    )
+  ) {
     damageBoss(state, boss, 2, catalog, room, events, true);
     if (boss.defeated) return;
   }
@@ -1641,44 +1667,71 @@ export function updateBossAndCombat(
 
   if (boss.defeated) return;
 
-  // Hero <-> Boss combat overlap
-  if (
-    hero.action !== 'dead' &&
-    aabbOverlap(hero.x, hero.y, hero.width, hero.height, boss.x, boss.y, boss.width, boss.height)
-  ) {
+  // Hero <-> Boss combat overlap (with expanded tongue/form attack hitboxes & generous stomp-first priority)
+  if (hero.action !== 'dead') {
     const isAirStomp = hero.action === 'air_stomp';
     const isFireDash = hero.action === 'fire_dash';
     const isRockUppercut = hero.action === 'rock_uppercut';
+    const isVoltDive = hero.action === 'volt_dive';
     const isVoltBlink = hero.action === 'volt_blink';
     const isShadowBlink = hero.action === 'shadow_blink';
     const isDashTackle = hero.action === 'ground_dash' || hero.action === 'wall_dash';
-    const isTopBounce = hero.vy <= 0.5 && hero.prevY >= boss.y + boss.height * 0.35;
-    const isHeavy = isAirStomp || isFireDash || isRockUppercut || isVoltBlink || isShadowBlink;
 
-    if (boss.shieldActive) {
-      if (isHeavy && boss.id === 'nightmare_sovereign') {
+    const bodyOverlap = aabbOverlap(hero.x, hero.y, hero.width, hero.height, boss.x, boss.y, boss.width, boss.height);
+    const stompTongueOverlap =
+      isAirStomp &&
+      aabbOverlap(hero.x - 0.14, hero.y - 0.42, hero.width + 0.28, hero.height + 0.42, boss.x, boss.y, boss.width, boss.height);
+    const fireDashOverlap =
+      isFireDash &&
+      aabbOverlap(
+        hero.facing > 0 ? hero.x : hero.x - 0.48,
+        hero.y - 0.04,
+        hero.width + 0.48,
+        hero.height + 0.08,
+        boss.x,
+        boss.y,
+        boss.width,
+        boss.height,
+      );
+    const rockUppercutOverlap =
+      isRockUppercut &&
+      hero.abilityPhase === 1 &&
+      aabbOverlap(hero.x - 0.08, hero.y, hero.width + 0.16, hero.height + 0.35, boss.x, boss.y, boss.width, boss.height);
+
+    if (bodyOverlap || stompTongueOverlap || fireDashOverlap || rockUppercutOverlap) {
+      const invulnGrace = hero.invulnTimer > 0 && !hero.grounded ? 0.2 : 0;
+      const fallMargin = hero.vy < -0.5 ? 0.2 : 0;
+      const isTopBounce =
+        hero.vy <= 1.0 &&
+        (hero.y + fallMargin >= boss.y + boss.height * 0.5 - hero.height * 0.25 - invulnGrace ||
+          hero.prevY >= boss.y + boss.height * 0.35 - invulnGrace);
+      const isHeavy = isAirStomp || isFireDash || isRockUppercut || isVoltDive || isVoltBlink || isShadowBlink;
+
+      if (boss.shieldActive) {
+        if (isHeavy && boss.id === 'nightmare_sovereign') {
+          damageBoss(state, boss, 2, catalog, room, events, true);
+          applyHeroAttackBounce(state, isAirStomp, isFireDash, isVoltBlink, input);
+        } else if (isTopBounce || isHeavy) {
+          // Deflect hero upward safely off shield (or punish head-on drill hit if non-top)
+          if (boss.id === 'mecha_bull' && boss.state === 'drill_charge' && !isTopBounce) {
+            damageHero(state, 1, bx, events, 'enemy');
+          } else {
+            applyHeroAttackBounce(state, false, isFireDash, isVoltBlink, input);
+          }
+        } else if (bodyOverlap && hero.lastEnemyHitTimer <= 0) {
+          damageHero(state, 1, bx, events, 'enemy');
+        }
+      } else if (isHeavy) {
         damageBoss(state, boss, 2, catalog, room, events, true);
         applyHeroAttackBounce(state, isAirStomp, isFireDash, isVoltBlink, input);
-      } else if (isTopBounce || isHeavy) {
-        // Deflect hero upward safely off shield (or punish head-on drill hit if non-top)
-        if (boss.id === 'mecha_bull' && boss.state === 'drill_charge' && !isTopBounce) {
-          damageHero(state, 1, bx, events, 'enemy');
-        } else {
-          applyHeroAttackBounce(state, false, isFireDash, isVoltBlink, input);
+      } else if (isDashTackle || isTopBounce) {
+        damageBoss(state, boss, 1, catalog, room, events, false);
+        applyHeroAttackBounce(state, false, false, false, input);
+      } else if (bodyOverlap && hero.lastEnemyHitTimer <= 0) {
+        const dmgRes = damageHero(state, 1, bx, events, 'enemy');
+        if (dmgRes.evilRingTriggered) {
+          damageBoss(state, boss, 2, catalog, room, events, true);
         }
-      } else if (hero.lastEnemyHitTimer <= 0) {
-        damageHero(state, 1, bx, events, 'enemy');
-      }
-    } else if (isHeavy) {
-      damageBoss(state, boss, 2, catalog, room, events, true);
-      applyHeroAttackBounce(state, isAirStomp, isFireDash, isVoltBlink, input);
-    } else if (isDashTackle || isTopBounce) {
-      damageBoss(state, boss, 1, catalog, room, events, false);
-      applyHeroAttackBounce(state, false, false, false, input);
-    } else if (hero.lastEnemyHitTimer <= 0) {
-      const dmgRes = damageHero(state, 1, bx, events, 'enemy');
-      if (dmgRes.evilRingTriggered) {
-        damageBoss(state, boss, 2, catalog, room, events, true);
       }
     }
   }

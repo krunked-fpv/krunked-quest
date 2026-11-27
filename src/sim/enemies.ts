@@ -96,7 +96,6 @@ export function applyHeroAttackBounce(
   const hero = state.hero;
   hero.jumpsRemaining = hero.maxAirJumps;
   hero.abilityUsedInAir = false;
-  hero.lastEnemyHitTimer = PHYSICS.LAST_ENEMY_HIT_TIMER;
 
   if (hasRelic(state, 'old_clock')) {
     state.slowmoTimer = Math.max(state.slowmoTimer, SIM_RULES.OLD_CLOCK_SLOWMO_DUR);
@@ -104,7 +103,16 @@ export function applyHeroAttackBounce(
   }
 
   if (isFireDash) {
-    // Flame Rocket Dash kills enemy & refreshes air dash + double jump while continuing
+    // Flame Rocket Dash kills enemy, extends dash timer (+0.40s chain!) & refreshes air ability + jumps
+    hero.abilityTimer = 0;
+    hero.lastEnemyHitTimer = 0;
+    return;
+  }
+
+  if (hero.action === 'rock_uppercut') {
+    // Stone Uppercut extends rise window & refreshes air jumps on enemy hit
+    hero.abilityTimer = 0;
+    hero.lastEnemyHitTimer = 0;
     return;
   }
 
@@ -122,12 +130,23 @@ export function applyHeroAttackBounce(
     hero.vx = sx * FORM_PARAMS.VOLT_EXIT_SLING;
     hero.vy = sy * FORM_PARAMS.VOLT_EXIT_SLING;
     hero.voltTargetId = null;
-    hero.action = 'jump';
+    hero.action = 'flip';
     hero.abilityTimer = 0;
+    hero.lastEnemyHitTimer = 0;
     if (getUpgradeLevel(state, 'VoltShield') > 0) {
       hero.invulnTimer = Math.max(hero.invulnTimer, FORM_PARAMS.VOLT_SHIELD_DUR);
     }
     return;
+  }
+
+  // Retroactive super-bounce forgiveness: ONLY set on normal non-stomp head bounces (0.05s / 0.10s Elec+Shadow)
+  if (!isStomp) {
+    hero.lastEnemyHitTimer =
+      hero.form === 'krunk_electric' || hero.form === 'krunk_shadow'
+        ? SIM_RULES.LAST_ENEMY_HIT_EXTENDED
+        : PHYSICS.LAST_ENEMY_HIT_TIMER;
+  } else {
+    hero.lastEnemyHitTimer = 0;
   }
 
   hero.vy = computeEnemyBounceVy(state, isStomp);
@@ -135,7 +154,18 @@ export function applyHeroAttackBounce(
   hero.jumpHoldTimer = 0;
   hero.wallJumpHoldTimer = 0;
   hero.stompDelayTimer = 0;
-  hero.action = 'jump';
+  hero.groundDashTimer = 0;
+  hero.wallDashTimer = 0;
+  if (isStomp) {
+    hero.tongueKind = 'air_stomp';
+    hero.tongueTimer = 0.12;
+    hero.tongueDuration = 0.12;
+    hero.tongueOriginX = hero.x + hero.width * 0.5;
+    hero.tongueOriginY = hero.y;
+    hero.tongueDirX = 0;
+    hero.tongueDirY = -1;
+  }
+  hero.action = 'flip';
   hero.scaleX = 0.8;
   hero.scaleY = 1.28;
 }
@@ -267,7 +297,7 @@ export function damageEnemy(
 
   registerComboEnemyHit(state, cx, cy, killed, events);
   events.push({ type: 'enemy_hit', x: cx, y: cy, killed, combo: state.combo.count });
-  state.hitstopTicks = Math.max(state.hitstopTicks, killed ? 2 : 1);
+  state.hitstopTicks = Math.max(state.hitstopTicks, killed ? 3 : 2);
   return killed;
 }
 
@@ -1233,6 +1263,8 @@ export function updateEnemiesAndCombat(
   dt: number,
   explosions: BlastCircle[],
   completedVoltTargetId: string | null,
+  completedShadowTargetId: string | null,
+  groundStompHitbox: { x: number; y: number; w: number; h: number } | null,
   evilRingTriggered: boolean,
   events: SimEvent[],
 ): void {
@@ -1271,6 +1303,40 @@ export function updateEnemiesAndCombat(
     }
   }
 
+  // Shadow vanish-strike target hit on enemies
+  if (completedShadowTargetId) {
+    const count = state.enemies.length;
+    for (let i = 0; i < count; i++) {
+      const e = state.enemies[i];
+      if (e.alive && e.id === completedShadowTargetId) {
+        damageEnemy(state, e, 2, catalog, room, events);
+      }
+    }
+  }
+
+  // Ground Stomp tongue-slam foot hitbox check against ground enemies underfoot
+  if (groundStompHitbox) {
+    const count = state.enemies.length;
+    for (let i = 0; i < count; i++) {
+      const e = state.enemies[i];
+      if (!e.alive) continue;
+      if (
+        aabbOverlap(
+          groundStompHitbox.x,
+          groundStompHitbox.y,
+          groundStompHitbox.w,
+          groundStompHitbox.h,
+          e.x,
+          e.y,
+          e.width,
+          e.height,
+        )
+      ) {
+        damageEnemy(state, e, 2, catalog, room, events);
+      }
+    }
+  }
+
   const dashRoundFireActive =
     hero.form === 'krunk_fire' &&
     getUpgradeLevel(state, 'DashRoundFire') > 0 &&
@@ -1303,37 +1369,100 @@ export function updateEnemiesAndCombat(
 
     if (!e.alive) continue;
 
-    // DashRoundFire orbiting flame hit check
+    // DashRoundFire orbiting flame + FireUp/FireDown (y +- 0.7) hit check
     if (dashRoundFireActive) {
       const ex = e.x + e.width * 0.5;
       const ey = e.y + e.height * 0.5;
       const r = SIM_RULES.DASH_ROUND_FIRE_RADIUS;
-      if ((ex - hx) * (ex - hx) + (ey - hy) * (ey - hy) <= r * r) {
+      const upHit = aabbOverlap(
+        hx - SIM_RULES.FIRE_ROUND_HALF_W,
+        hy + SIM_RULES.FIRE_ROUND_OFFSET_Y - SIM_RULES.FIRE_ROUND_HALF_H,
+        SIM_RULES.FIRE_ROUND_HALF_W * 2,
+        SIM_RULES.FIRE_ROUND_HALF_H * 2,
+        e.x,
+        e.y,
+        e.width,
+        e.height,
+      );
+      const downHit = aabbOverlap(
+        hx - SIM_RULES.FIRE_ROUND_HALF_W,
+        hy - SIM_RULES.FIRE_ROUND_OFFSET_Y - SIM_RULES.FIRE_ROUND_HALF_H,
+        SIM_RULES.FIRE_ROUND_HALF_W * 2,
+        SIM_RULES.FIRE_ROUND_HALF_H * 2,
+        e.x,
+        e.y,
+        e.width,
+        e.height,
+      );
+      const radialHit = (ex - hx) * (ex - hx) + (ey - hy) * (ey - hy) <= r * r;
+      if (upHit || downHit || radialHit) {
         damageEnemy(state, e, 2, catalog, room, events);
         if (hero.action === 'fire_dash') {
+          hero.abilityTimer = 0; // Extend Fire Dash chain!
           hero.abilityUsedInAir = false;
           hero.jumpsRemaining = hero.maxAirJumps;
-          hero.lastEnemyHitTimer = PHYSICS.LAST_ENEMY_HIT_TIMER;
         }
         if (!e.alive) continue;
       }
     }
 
-    // Hero <-> Enemy AABB stomp-first combat
-    if (
-      hero.action !== 'dead' &&
-      aabbOverlap(hero.x, hero.y, hero.width, hero.height, e.x, e.y, e.width, e.height)
-    ) {
+    // Active tongue / form-ability expanded attack hitboxes + Hero body AABB
+    if (hero.action !== 'dead') {
       const isAirStomp = hero.action === 'air_stomp';
       const isFireDash = hero.action === 'fire_dash';
       const isRockUppercut = hero.action === 'rock_uppercut';
+      const isVoltDive = hero.action === 'volt_dive';
       const isVoltBlink = hero.action === 'volt_blink';
       const isShadowBlink = hero.action === 'shadow_blink';
       const isDashTackle = hero.action === 'ground_dash' || hero.action === 'wall_dash';
-      const isTopBounce =
-        hero.vy <= 0.5 && hero.prevY >= e.y + e.height * 0.3 && !def.armoredTop;
 
-      if (isAirStomp || isFireDash || isRockUppercut || isVoltBlink || isShadowBlink) {
+      const bodyOverlap = aabbOverlap(hero.x, hero.y, hero.width, hero.height, e.x, e.y, e.width, e.height);
+      const stompTongueOverlap =
+        isAirStomp &&
+        aabbOverlap(hero.x - 0.14, hero.y - 0.42, hero.width + 0.28, hero.height + 0.42, e.x, e.y, e.width, e.height);
+      const fireDashOverlap =
+        isFireDash &&
+        aabbOverlap(
+          hero.facing > 0 ? hero.x : hero.x - 0.48,
+          hero.y - 0.04,
+          hero.width + 0.48,
+          hero.height + 0.08,
+          e.x,
+          e.y,
+          e.width,
+          e.height,
+        );
+      const rockUppercutOverlap =
+        isRockUppercut &&
+        hero.abilityPhase === 1 &&
+        aabbOverlap(hero.x - 0.08, hero.y, hero.width + 0.16, hero.height + 0.35, e.x, e.y, e.width, e.height);
+      const voltDiveOverlap =
+        isVoltDive &&
+        aabbOverlap(
+          hero.facing > 0 ? hero.x : hero.x - 0.3,
+          hero.y - 0.12,
+          hero.width + 0.3,
+          hero.height + 0.12,
+          e.x,
+          e.y,
+          e.width,
+          e.height,
+        );
+
+      if (!bodyOverlap && !stompTongueOverlap && !fireDashOverlap && !rockUppercutOverlap && !voltDiveOverlap) {
+        continue;
+      }
+
+      // Generous origin JumpOnTopOfObject stomp-first priority (+0.2u fall margin & post-hit air grace)
+      const invulnGrace = hero.invulnTimer > 0 && !hero.grounded ? 0.2 : 0;
+      const fallMargin = hero.vy < -0.5 ? 0.2 : 0;
+      const isTopBounce =
+        hero.vy <= 1.0 &&
+        !def.armoredTop &&
+        (hero.y + fallMargin >= e.y + e.height * 0.5 - hero.height * 0.25 - invulnGrace ||
+          hero.prevY >= e.y + e.height * 0.3 - invulnGrace);
+
+      if (isAirStomp || isFireDash || isRockUppercut || isVoltDive || isVoltBlink || isShadowBlink) {
         const dmg = 2;
         damageEnemy(state, e, dmg, catalog, room, events);
         applyHeroAttackBounce(state, isAirStomp, isFireDash, isVoltBlink, input);
@@ -1362,7 +1491,7 @@ export function updateEnemiesAndCombat(
       } else if (isTopBounce) {
         damageEnemy(state, e, 1, catalog, room, events);
         applyHeroAttackBounce(state, false, false, false, input);
-      } else if (hero.lastEnemyHitTimer <= 0 && e.stunTimer <= 0) {
+      } else if (bodyOverlap && hero.lastEnemyHitTimer <= 0 && e.stunTimer <= 0) {
         const res = damageHero(state, 1, e.x + e.width * 0.5, events, 'enemy');
         if (res.evilRingTriggered) {
           damageEnemy(state, e, SIM_RULES.EVIL_RING_DAMAGE, catalog, room, events);

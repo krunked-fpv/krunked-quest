@@ -268,7 +268,61 @@ function main(): void {
   check(hazardTiersSeen.has(0) && hazardTiersSeen.has(1) && hazardTiersSeen.has(2), 'Ghost Ship exercises all 3 hazard tiers (0,1,2)', `seen=[${[...hazardTiersSeen].join(',')}]`);
 
   // --------------------------------------------------------------------------
-  // 5. Bit-for-Bit FNV-1a Replay Determinism Proof (600 ticks x 2 runs)
+  // 5. Authentic Tongue/Stomp, Dash Cancel & Input Buffering Feel Probes
+  // --------------------------------------------------------------------------
+  {
+    const feel = engine.createInitialState(catalog, { seed: 9001, mode: 'story', roomId: 'mlair_01' });
+    feel.progress.unlockedForms = [...HERO_FORMS];
+    // Settle grounded
+    for (let t = 0; t < 10; t++) engine.step(feel, createEmptyInputFrame(), catalog);
+    // Ground Stomp launches straight up (vx=0, vy=12.0) with active tongue telemetry
+    const gsInp = createEmptyInputFrame();
+    gsInp.stompPressed = true;
+    const gsEv = engine.step(feel, gsInp, catalog);
+    check(
+      feel.hero.action === 'ground_stomp' &&
+        feel.hero.vx === 0 &&
+        Math.abs(feel.hero.vy - 12.0) < 0.05 &&
+        feel.hero.tongueKind === 'ground_stomp' &&
+        feel.hero.tongueTimer > 0 &&
+        gsEv.some((e) => e.type === 'ground_stomp'),
+      'Ground Stomp triggers vertical tongue-slam launch (vx=0, vy=12) + tongue telemetry',
+    );
+    // Rise 4 ticks into Ground Stomp arc so hero has clearance, then Air Stomp midair!
+    for (let t = 0; t < 4; t++) engine.step(feel, createEmptyInputFrame(), catalog);
+    // Midair Air Stomp preserves horizontal speed & activates tongueKind='air_stomp'
+    feel.hero.vx = 5.0;
+    const asInp = createEmptyInputFrame();
+    asInp.stompPressed = true;
+    asInp.moveX = 1;
+    engine.step(feel, asInp, catalog);
+    check(
+      feel.hero.action === 'air_stomp' &&
+        feel.hero.vy <= -17.9 &&
+        feel.hero.vx > 4.0 &&
+        feel.hero.tongueKind === 'air_stomp',
+      'Air Stomp dives immediately (-18 u/s) while preserving horizontal momentum + tongue state',
+    );
+    // Ground Dash + mid-dash Double Jump preserves groundDashTimer momentum burst
+    const gd = engine.createInitialState(catalog, { seed: 9002, mode: 'story', roomId: 'mlair_01' });
+    for (let t = 0; t < 10; t++) engine.step(gd, createEmptyInputFrame(), catalog);
+    const dInp = createEmptyInputFrame();
+    dInp.dashPressed = true;
+    dInp.moveX = 1;
+    engine.step(gd, dInp, catalog);
+    const dashLaunched = gd.hero.action === 'ground_dash' && gd.hero.vx > 16.5 && gd.hero.tongueKind === 'ground_dash';
+    for (let t = 0; t < 4; t++) engine.step(gd, createEmptyInputFrame(), catalog);
+    const jInp = createEmptyInputFrame();
+    jInp.jumpPressed = true;
+    engine.step(gd, jInp, catalog);
+    check(
+      dashLaunched && gd.hero.groundDashTimer > 0.35 && gd.hero.vx > 12.0 && gd.hero.vy > 12.5,
+      'Ground Dash launches with tongue FX and preserves horizontal burst across mid-dash jump',
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 6. Bit-for-Bit FNV-1a Replay Determinism Proof (600 ticks x 2 runs)
   // --------------------------------------------------------------------------
   function runTape(seed: number): number[] {
     const s = engine.createInitialState(catalog, { seed, mode: 'story', roomId: 'tdm_01' });

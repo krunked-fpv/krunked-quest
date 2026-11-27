@@ -157,44 +157,44 @@ export function getGlyphsForDevice(device: InputDeviceMode, bindings: KeyBinding
       return {
         device,
         jump: 'A',
-        dash: 'X',
-        stomp: 'B',
-        form: 'LB/RB',
-        interact: 'Y',
-        map: 'VIEW',
+        stomp: 'X',
+        dash: 'RB/B',
+        form: 'LB/LT',
+        interact: 'X',
+        map: 'Y',
         pause: 'MENU',
       };
     case 'gamepad_ps':
       return {
         device,
         jump: '✕',
-        dash: '□',
-        stomp: '○',
-        form: 'L1/R1',
-        interact: '△',
-        map: 'SHARE',
+        stomp: '□',
+        dash: 'R1/○',
+        form: 'L1/L2',
+        interact: '□',
+        map: '△',
         pause: 'OPT',
       };
     case 'gamepad_switch':
       return {
         device,
         jump: 'B',
-        dash: 'Y',
-        stomp: 'A',
-        form: 'L/R',
-        interact: 'X',
-        map: '-',
+        stomp: 'Y',
+        dash: 'R/A',
+        form: 'L/ZL',
+        interact: 'Y',
+        map: 'X',
         pause: '+',
       };
     case 'gamepad_tesla':
       return {
         device,
         jump: 'A',
-        dash: 'X',
-        stomp: 'B',
-        form: 'LB/RB',
-        interact: 'Y',
-        map: 'VIEW',
+        stomp: 'X',
+        dash: 'RB/B',
+        form: 'LB/LT',
+        interact: 'X',
+        map: 'Y',
         pause: 'MENU',
       };
     case 'touch':
@@ -615,31 +615,30 @@ export class InputOrchestrator implements IInputOrchestrator {
       return false;
     };
 
-    // 1. Keyboard axes & buttons
+    // 1. Keyboard axes & buttons (Authentic PC Z=Jump, X=Stomp/Interact, C=Dash + accessible WASD/Space/Shift/J/K/L alts)
     const kbLeft = matchKeySet(this._keysHeld, 'left', ['ArrowLeft', 'KeyA']);
     const kbRight = matchKeySet(this._keysHeld, 'right', ['ArrowRight', 'KeyD']);
     const kbUp = matchKeySet(this._keysHeld, 'up', ['ArrowUp', 'KeyW']);
-    // KeyS doubles as Down when using WASD and as default Stomp (Air Down+Stomp).
-    const kbDown = matchKeySet(this._keysHeld, 'down', ['ArrowDown', 'KeyS'], ['KeyS']);
+    const kbDown = matchKeySet(this._keysHeld, 'down', ['ArrowDown', 'KeyS']);
 
     const kbMoveX = (kbRight ? 1 : 0) - (kbLeft ? 1 : 0);
     const kbMoveY = (kbUp ? 1 : 0) - (kbDown ? 1 : 0);
 
-    const kbJumpHeld = matchKeySet(this._keysHeld, 'jump', ['Space', 'KeyZ', 'KeyK']);
-    const kbDashHeld = matchKeySet(this._keysHeld, 'dash', ['ShiftLeft', 'ShiftRight', 'KeyX', 'KeyJ']);
-    const kbStompHeld = matchKeySet(this._keysHeld, 'stomp', ['KeyC']);
+    const kbJumpHeld = matchKeySet(this._keysHeld, 'jump', ['KeyZ', 'Space', 'KeyK']);
+    const kbStompHeld = matchKeySet(this._keysHeld, 'stomp', ['KeyX', 'KeyJ']);
+    const kbDashHeld = matchKeySet(this._keysHeld, 'dash', ['KeyC', 'ShiftLeft', 'ShiftRight', 'KeyL']);
     const kbFormNextHeld = matchKeySet(this._keysHeld, 'formNext', ['KeyE', 'BracketRight']);
     const kbFormPrevHeld = matchKeySet(this._keysHeld, 'formPrev', ['KeyQ', 'BracketLeft']);
-    const kbInteractHeld = matchKeySet(this._keysHeld, 'interact', ['KeyF', 'Enter']);
+    const kbInteractHeld = matchKeySet(this._keysHeld, 'interact', ['KeyF', 'Enter', 'KeyX'], ['KeyX']);
     const kbMapHeld = matchKeySet(this._keysHeld, 'map', ['KeyM', 'Tab']);
     const kbPauseHeld = matchKeySet(this._keysHeld, 'pause', ['Escape', 'KeyP']);
 
-    const kbJumpLatched = matchKeySet(this._keysLatched, 'jump', ['Space', 'KeyZ', 'KeyK']);
-    const kbDashLatched = matchKeySet(this._keysLatched, 'dash', ['ShiftLeft', 'ShiftRight', 'KeyX', 'KeyJ']);
-    const kbStompLatched = matchKeySet(this._keysLatched, 'stomp', ['KeyC']);
+    const kbJumpLatched = matchKeySet(this._keysLatched, 'jump', ['KeyZ', 'Space', 'KeyK']);
+    const kbStompLatched = matchKeySet(this._keysLatched, 'stomp', ['KeyX', 'KeyJ']);
+    const kbDashLatched = matchKeySet(this._keysLatched, 'dash', ['KeyC', 'ShiftLeft', 'ShiftRight', 'KeyL']);
     const kbFormNextLatched = matchKeySet(this._keysLatched, 'formNext', ['KeyE', 'BracketRight']);
     const kbFormPrevLatched = matchKeySet(this._keysLatched, 'formPrev', ['KeyQ', 'BracketLeft']);
-    const kbInteractLatched = matchKeySet(this._keysLatched, 'interact', ['KeyF', 'Enter']);
+    const kbInteractLatched = matchKeySet(this._keysLatched, 'interact', ['KeyF', 'Enter', 'KeyX'], ['KeyX']);
     const kbMapLatched = matchKeySet(this._keysLatched, 'map', ['KeyM', 'Tab']);
     const kbPauseLatched = matchKeySet(this._keysLatched, 'pause', ['Escape', 'KeyP']);
 
@@ -880,14 +879,15 @@ export class InputOrchestrator implements IInputOrchestrator {
       }
     }
 
-    // Action buttons (W3C standard mapping — also aligned with Switch/PS/Xbox/Tesla glyphs)
+    // Action buttons (W3C standard mapping matching authentic origin controller muscle memory:
+    // A/Cross=Jump [0], X/Square=Stomp/Interact [2], RB/R1/RT/B=Dash [5,7,1], LB/LT=Form [4,6], Y/View=Map [3,8], Menu=Pause [9])
     const jump = readButton(pad, 0);
-    const stomp = readButton(pad, 1) || readButton(pad, 6, 0.35);
-    const dash = readButton(pad, 2) || readButton(pad, 7, 0.35);
-    const interact = readButton(pad, 3);
+    const stomp = readButton(pad, 2);
+    const dash = readButton(pad, 5) || readButton(pad, 7, 0.35) || readButton(pad, 1);
+    const interact = readButton(pad, 2);
     const formPrev = readButton(pad, 4);
-    const formNext = readButton(pad, 5);
-    const map = readButton(pad, 8);
+    const formNext = readButton(pad, 6, 0.35);
+    const map = readButton(pad, 3) || readButton(pad, 8);
     const pause = readButton(pad, 9);
 
     const anyButton =
