@@ -331,10 +331,6 @@ export class HudRenderer {
       const bob = Math.round(Math.sin(timeSec * 2.4) * 2);
       ctx.drawImage(customLogo, 0, 0, lw, lh, 14, 18 + bob, dw, dh);
     }
-
-    // Subtle dark atmospheric vignette strip across top/center so HTML title panel pops
-    ctx.fillStyle = 'rgba(13, 8, 22, 0.22)';
-    ctx.fillRect(0, 0, VIEWPORT_W, 196);
   }
 
   public renderHud(

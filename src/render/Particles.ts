@@ -76,6 +76,7 @@ interface Shockwave {
   color: string;
   color2: string;
   flat: boolean;
+  skipWithCustomPack: boolean;
 }
 
 interface FloatingPopup {
@@ -154,6 +155,7 @@ export class ParticleSystem {
         color: HIGHLIGHT_CREAM,
         color2: UI_COLORS.frameGold,
         flat: false,
+        skipWithCustomPack: false,
       });
     }
     for (let i = 0; i < MAX_POPUPS; i++) {
@@ -263,6 +265,7 @@ export class ParticleSystem {
     color: string,
     color2: string,
     flat: boolean,
+    skipWithCustomPack = false,
   ): void {
     const w = this.shockwaves[this.nextWaveCursor]!;
     this.nextWaveCursor = (this.nextWaveCursor + 1) % MAX_SHOCKWAVES;
@@ -276,6 +279,7 @@ export class ParticleSystem {
     w.color = color;
     w.color2 = color2;
     w.flat = flat;
+    w.skipWithCustomPack = skipWithCustomPack;
   }
 
   public spawnPopup(
@@ -376,7 +380,7 @@ export class ParticleSystem {
             );
           }
           if (ev.air) {
-            this.spawnShockwave(ev.x, ev.y + 0.1, 0.8, 0.2, pal[4], pal[0], true);
+            this.spawnShockwave(ev.x, ev.y + 0.1, 0.8, 0.2, pal[4], pal[0], true, true);
           }
           this.spawnFxBurst(ev.x, ev.y + 0.15, 'jump_dust', 28, 0.22);
           break;
@@ -401,7 +405,7 @@ export class ParticleSystem {
             );
           }
           if (ev.heavy) {
-            this.spawnShockwave(ev.x, ev.y + 0.08, 1.35, 0.24, HIGHLIGHT_CREAM, UI_COLORS.frameGold, true);
+            this.spawnShockwave(ev.x, ev.y + 0.08, 1.35, 0.24, HIGHLIGHT_CREAM, UI_COLORS.frameGold, true, true);
           }
           this.spawnFxBurst(ev.x, ev.y + 0.12, 'land_dust', ev.heavy ? 42 : 28, 0.24);
           break;
@@ -458,7 +462,7 @@ export class ParticleSystem {
               false,
             );
           }
-          this.spawnShockwave(ev.x, ev.y + 0.4, 0.95, 0.2, c1, c2, false);
+          this.spawnShockwave(ev.x, ev.y + 0.4, 0.95, 0.2, c1, c2, false, true);
           this.spawnFxBurst(
             ev.x,
             ev.y + 0.45,
@@ -498,7 +502,7 @@ export class ParticleSystem {
               true,
             );
           }
-          this.spawnShockwave(ev.x, ev.y + 0.12, ev.fiery ? 1.85 : 1.35, 0.26, col1, col2, true);
+          this.spawnShockwave(ev.x, ev.y + 0.12, ev.fiery ? 1.85 : 1.35, 0.26, col1, col2, true, true);
           this.spawnFxBurst(ev.x, ev.y + 0.35, 'stomp_ring', ev.fiery ? 56 : 46, 0.3);
           this.spawnFxBurst(ev.x, ev.y + 0.45, 'stomp_jump', 42, 0.28);
           if (ev.fiery) {
@@ -536,7 +540,7 @@ export class ParticleSystem {
         }
 
         case 'stomp_start':
-          this.spawnShockwave(ev.x, ev.y + 0.45, 0.75, 0.16, HIGHLIGHT_CREAM, UI_COLORS.comboMid, false);
+          this.spawnShockwave(ev.x, ev.y + 0.45, 0.75, 0.16, HIGHLIGHT_CREAM, UI_COLORS.comboMid, false, true);
           this.spawnFxBurst(ev.x, ev.y + 0.35, 'stomp_jump', 36, 0.22);
           break;
 
@@ -561,7 +565,7 @@ export class ParticleSystem {
               true,
             );
           }
-          this.spawnShockwave(ev.x, ev.y + 0.1, ev.explosive ? 2.1 : 1.45, 0.28, col1, col2, true);
+          this.spawnShockwave(ev.x, ev.y + 0.1, ev.explosive ? 2.1 : 1.45, 0.28, col1, col2, true, true);
           this.spawnFxBurst(ev.x, ev.y + 0.35, 'stomp_ring', ev.explosive ? 64 : 48, 0.32);
           if (ev.explosive) {
             this.spawnFxBurst(ev.x, ev.y + 0.5, 'fire_blast', 56, 0.32);
@@ -616,6 +620,7 @@ export class ParticleSystem {
             HIGHLIGHT_CREAM,
             UI_COLORS.frameGold,
             false,
+            true,
           );
           this.spawnFxBurst(ev.x, ev.y + 0.45, ev.killed ? 'stomp_hit' : 'hit_spark', ev.killed ? 42 : 30, 0.24);
           if (ev.killed) {
@@ -643,7 +648,7 @@ export class ParticleSystem {
               true,
             );
           }
-          this.spawnShockwave(ev.x, ev.y, 1.9, 0.28, HIGHLIGHT_CREAM, '#ff5268', false);
+          this.spawnShockwave(ev.x, ev.y, 1.9, 0.28, HIGHLIGHT_CREAM, '#ff5268', false, true);
           this.spawnFxBurst(ev.x, ev.y, 'stomp_hit', 48, 0.26);
           this.spawnPopup(ev.x, ev.y + 0.8, 'HIT!', 'orange', 1, 0.65);
           break;
@@ -1018,10 +1023,12 @@ export class ParticleSystem {
       }
     }
 
-    // 1. Pixel-stepped shockwave rings
+    // 1. Pixel-stepped shockwave rings (skip redundant procedural rings when origin `fx/*` bursts are active!)
+    const hasCustomFx = !!(customPack && isDrawable(customPack.getSprite('fx/stomp_ring')));
     for (let i = 0; i < MAX_SHOCKWAVES; i++) {
       const w = this.shockwaves[i]!;
       if (!w.active) continue;
+      if (hasCustomFx && w.skipWithCustomPack) continue;
       const sx = Math.round((w.x - camX) * PPU + HALF_W);
       const sy = Math.round((camY - w.y) * PPU + HALF_H);
       const rx = Math.max(2, Math.round(w.radius * PPU));
