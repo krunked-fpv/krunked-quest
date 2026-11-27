@@ -308,6 +308,73 @@ function scaleNearestFit(src: RgbaImage, targetW: number, targetH: number): Rgba
   return dst;
 }
 
+function scaleNearestExact(src: RgbaImage, dstW: number, dstH: number): RgbaImage {
+  const dst = createImage(dstW, dstH);
+  for (let y = 0; y < dstH; y += 1) {
+    const sy = Math.min(src.height - 1, Math.floor((y / dstH) * src.height));
+    for (let x = 0; x < dstW; x += 1) {
+      const sx = Math.min(src.width - 1, Math.floor((x / dstW) * src.width));
+      const s = (sy * src.width + sx) * 4;
+      const d = (y * dstW + x) * 4;
+      dst.rgba[d] = src.rgba[s]!;
+      dst.rgba[d + 1] = src.rgba[s + 1]!;
+      dst.rgba[d + 2] = src.rgba[s + 2]!;
+      dst.rgba[d + 3] = src.rgba[s + 3]!;
+    }
+  }
+  return dst;
+}
+
+function extendBottomRows(src: RgbaImage, extraH: number): RgbaImage {
+  if (extraH <= 0) return src;
+  const dst = createImage(src.width, src.height + extraH);
+  dst.rgba.set(src.rgba, 0);
+  const lastRowStart = (src.height - 1) * src.width * 4;
+  const lastRow = src.rgba.subarray(lastRowStart, lastRowStart + src.width * 4);
+  for (let y = src.height; y < dst.height; y += 1) {
+    dst.rgba.set(lastRow, y * src.width * 4);
+  }
+  return dst;
+}
+
+function featherBottomAlpha(src: RgbaImage, featherPx: number): RgbaImage {
+  const dst = createImage(src.width, src.height);
+  dst.rgba.set(src.rgba, 0);
+  const startY = Math.max(0, src.height - featherPx);
+  for (let y = startY; y < src.height; y += 1) {
+    const t = (src.height - 1 - y) / Math.max(1, featherPx);
+    const scale = Math.pow(Math.max(0, Math.min(1, t)), 1.35);
+    for (let x = 0; x < src.width; x += 1) {
+      const idx = (y * src.width + x) * 4 + 3;
+      dst.rgba[idx] = Math.round(dst.rgba[idx]! * scale);
+    }
+  }
+  return dst;
+}
+
+function alignTopOpaque(src: RgbaImage, targetW: number, targetH: number): RgbaImage {
+  let minY = src.height;
+  for (let y = 0; y < src.height; y += 1) {
+    let rowOpaque = false;
+    for (let x = 0; x < src.width; x += 1) {
+      if (src.rgba[(y * src.width + x) * 4 + 3]! > 32) {
+        rowOpaque = true;
+        break;
+      }
+    }
+    if (rowOpaque) {
+      minY = y;
+      break;
+    }
+  }
+  if (minY >= src.height) minY = 0;
+  const dst = createImage(targetW, targetH);
+  const copyW = Math.min(src.width, targetW);
+  const copyH = Math.min(src.height - minY, targetH);
+  blitOpaque(dst, src, 0, minY, copyW, copyH, 0, 0);
+  return dst;
+}
+
 function hasOpaquePixels(img: RgbaImage, x0 = 0, y0 = 0, w = img.width, h = img.height): boolean {
   const xEnd = Math.min(img.width, x0 + w);
   const yEnd = Math.min(img.height, y0 + h);
@@ -1902,19 +1969,19 @@ const BIOME_PARALLAX_SPECS: Readonly<Record<string, ParallaxSpec>> = {
   'bg/OPOUSO_near': { texName: 'OP_back_deco_stonearc', meta: { scrollX: 0.36, scrollY: 0.07, anchorY: 'bottom', offsetY: 0, tileX: true } },
 
   'bg/TDM': { texName: 'TM_BACK', meta: { scrollX: 0, scrollY: 0, anchorY: 'top', tileX: true, fillViewport: true } },
-  'bg/TDM_far': { texName: 'TM_cloud_A', meta: { scrollX: 0.08, scrollY: 0.02, anchorY: 'top', offsetY: 10, tileX: true } },
-  'bg/TDM_mid': { texName: 'TM_cloud_B', meta: { scrollX: 0.18, scrollY: 0.04, anchorY: 'top', offsetY: 56, tileX: true } },
-  'bg/TDM_near': { texName: 'TrilhaBGObjectsUp', meta: { scrollX: 0.38, scrollY: 0.08, anchorY: 'bottom', offsetY: 0, tileX: true } },
+  'bg/TDM_far': { texName: 'TM_cloud_A', meta: { scrollX: 0.08, scrollY: 0.02, anchorY: 'bottom', offsetY: -104, tileX: true } },
+  'bg/TDM_mid': { texName: 'TM_cloud_B', meta: { scrollX: 0.18, scrollY: 0.04, anchorY: 'bottom', offsetY: -78, tileX: true } },
+  'bg/TDM_near': { texName: 'TM_object_arbusto', meta: { scrollX: 0.36, scrollY: 0.07, anchorY: 'bottom', offsetY: 0, tileX: true } },
 
   'bg/FLIN': { texName: 'FI_background sky', meta: { scrollX: 0, scrollY: 0, anchorY: 'top', tileX: true, fillViewport: true } },
   'bg/FLIN_far': { texName: 'FI_deco_trees1', meta: { scrollX: 0.1, scrollY: 0.03, anchorY: 'bottom', offsetY: 0, tileX: true } },
   'bg/FLIN_mid': { texName: 'FI_background_trees front2', meta: { scrollX: 0.24, scrollY: 0.05, anchorY: 'bottom', offsetY: 0, tileX: true } },
   'bg/FLIN_near': { texName: 'FlorestItensBG', meta: { scrollX: 0.42, scrollY: 0.08, anchorY: 'bottom', offsetY: 0, tileX: true } },
 
-  'bg/AP': { texName: 'AP_background sky', meta: { scrollX: 0, scrollY: 0, anchorY: 'center', tileX: true, fillViewport: true } },
-  'bg/AP_far': { texName: 'AP_back deco_ext branch', meta: { scrollX: 0.1, scrollY: 0.03, anchorY: 'top', offsetY: 20, tileX: true } },
-  'bg/AP_mid': { texName: 'AP_back deco_shine bush', meta: { scrollX: 0.22, scrollY: 0.05, anchorY: 'bottom', offsetY: 0, tileX: true } },
-  'bg/AP_near': { texName: 'AP_back deco_capilars', meta: { scrollX: 0.38, scrollY: 0.08, anchorY: 'bottom', offsetY: 0, tileX: true } },
+  'bg/AP': { texName: 'AP_background sky', meta: { scrollX: 0.02, scrollY: 0.01, anchorY: 'top', tileX: true, fillViewport: true } },
+  'bg/AP_far': { texName: 'AP_back deco_things', meta: { scrollX: 0.1, scrollY: 0.03, anchorY: 'bottom', offsetY: -18, tileX: true } },
+  'bg/AP_mid': { texName: 'AP_back deco_shine bush', meta: { scrollX: 0.22, scrollY: 0.05, anchorY: 'bottom', offsetY: -4, tileX: true } },
+  'bg/AP_near': { texName: 'AP_back deco_things', meta: { scrollX: 0.38, scrollY: 0.08, anchorY: 'bottom', offsetY: 0, tileX: true } },
 
   'bg/ATVC': { texName: 'AV_background', meta: { scrollX: 0, scrollY: 0, anchorY: 'top', tileX: true, fillViewport: true } },
   'bg/ATVC_far': { texName: 'AV_back 2', meta: { scrollX: 0.1, scrollY: 0.03, anchorY: 'bottom', offsetY: 0, tileX: true } },
@@ -1932,8 +1999,8 @@ const BIOME_PARALLAX_SPECS: Readonly<Record<string, ParallaxSpec>> = {
   'bg/LAB_near': { texName: 'Lab_Machine01_BG', meta: { scrollX: 0.4, scrollY: 0.08, anchorY: 'bottom', offsetY: 0, tileX: true } },
 
   'bg/TEMP': { texName: 'TA_back_sky', meta: { scrollX: 0, scrollY: 0, anchorY: 'top', tileX: true, fillViewport: true } },
-  'bg/TEMP_far': { texName: 'TA_back_cloud1', meta: { scrollX: 0.08, scrollY: 0.02, anchorY: 'top', offsetY: 12, tileX: true } },
-  'bg/TEMP_mid': { texName: 'TA_back_cloud2', meta: { scrollX: 0.18, scrollY: 0.04, anchorY: 'center', offsetY: 16, tileX: true } },
+  'bg/TEMP_far': { texName: 'TA_back_cloud1', meta: { scrollX: 0.08, scrollY: 0.02, anchorY: 'bottom', offsetY: 0, tileX: true } },
+  'bg/TEMP_mid': { texName: 'TA_back_cloud2', meta: { scrollX: 0.18, scrollY: 0.04, anchorY: 'bottom', offsetY: 0, tileX: true } },
   'bg/TEMP_near': { texName: 'TA_back_cloud3', meta: { scrollX: 0.34, scrollY: 0.07, anchorY: 'bottom', offsetY: 0, tileX: true } },
 
   'bg/EVIL': { texName: 'RP_background sky_NEW', meta: { scrollX: 0, scrollY: 0, anchorY: 'top', tileX: true, fillViewport: true } },
@@ -1990,15 +2057,16 @@ function extractSpecialTileOrProp(db: UnityAssetDatabase, key: string): PackedAt
     }
 
     case 'tile/oneway': {
+      // Frame 0 of TM_bridge_tile_NEW FINAL is the crisp static braided vine bridge (frames 1..9 are bounce motion-blur!).
+      // Trim top transparent rows so the platform top sits flush at y=0 with zero ghost blur artifacts.
       const tex = db.findTexture('TM_bridge_tile_NEW FINAL');
       if (!tex) return null;
-      const sprites = db.getSortedSpritesForTex(tex.ref).slice(0, 3);
-      if (sprites.length === 0) return null;
-      const items = sprites
-        .map((sp) => db.cropSprite(sp))
-        .filter((img): img is RgbaImage => img !== null)
-        .map((img) => ({ img: cropImage(img, 0, 0, Math.min(32, img.width), Math.min(32, img.height)), pivotX: 0, pivotY: 0 }));
-      return items.length > 0 ? packImageFrames(items, 1, false) : null;
+      const sprites = db.getSortedSpritesForTex(tex.ref);
+      const first = sprites[0];
+      const raw = first ? db.cropSprite(first) : db.decodeTextureByRef(tex.ref);
+      if (!raw) return null;
+      const clean = alignTopOpaque(cropImage(raw, 0, 0, Math.min(32, raw.width), raw.height), 32, 32);
+      return packImageFrames([{ img: clean, pivotX: 0, pivotY: 0 }], 1, false);
     }
 
     case 'tile/breakable': {
@@ -2027,14 +2095,35 @@ function extractSpecialTileOrProp(db: UnityAssetDatabase, key: string): PackedAt
     }
 
     case 'tile/vine': {
+      // FI_tylorean_1 (96x32) is a horizontal tyrolean vine: crop the seamless repeating middle 32x32
+      // braided segment (x=32..64), rotate 90° CW into a continuous vertical climbable vine column,
+      // and center it horizontally inside 32x32 so stacked vine tiles connect with zero gaps!
       const tex = db.findTexture('FI_tylorean_1');
       if (!tex) return null;
       const img = db.decodeTextureByRef(tex.ref);
-      if (!img) return null;
-      const items = [0, 32, 64]
-        .filter((x) => x + 32 <= img.width)
-        .map((x) => ({ img: cropImage(img, x, 0, 32, 32), pivotX: 0, pivotY: 0 }));
-      return items.length > 0 ? packImageFrames(items, 4, true) : null;
+      if (!img || img.width < 64 || img.height < 32) return null;
+      const midHoriz = cropImage(img, 32, 0, 32, 32);
+      const vert = rotate90CW(midHoriz);
+      // Center opaque horizontal bounding box inside 32px width so the vertical vine runs straight down the tile center
+      let minX = 32;
+      let maxX = -1;
+      for (let y = 0; y < 32; y += 1) {
+        for (let x = 0; x < 32; x += 1) {
+          if (vert.rgba[(y * 32 + x) * 4 + 3]! > 32) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+      const centered = createImage(32, 32);
+      if (maxX >= minX) {
+        const vw = maxX - minX + 1;
+        const dx = Math.floor((32 - vw) / 2);
+        blitOpaque(centered, vert, minX, 0, vw, 32, dx, 0);
+      } else {
+        blitOpaque(centered, vert, 0, 0, 32, 32, 0, 0);
+      }
+      return packImageFrames([{ img: centered, pivotX: 0, pivotY: 0 }], 1, false);
     }
 
     case 'tile/acid': {
@@ -2314,6 +2403,7 @@ function extractParallaxLayer(db: UnityAssetDatabase, key: string): { image: Rgb
   const fullImg = db.decodeTextureByRef(tex.ref);
   if (!fullImg) return null;
 
+  let img: RgbaImage = fullImg;
   const sprites = db.getSortedSpritesForTex(tex.ref);
   if (sprites.length > 1) {
     // Multi-frame sheet (e.g. RP_background sky_NEW 4x 576x324, OP_back lake 12x 574x108, ARENA_BACK_SEA 6x 372x181):
@@ -2321,16 +2411,68 @@ function extractParallaxLayer(db: UnityAssetDatabase, key: string): { image: Rgb
     for (const sp of sprites) {
       const cropped = cropImage(fullImg, sp.x, sp.y, sp.w, sp.h);
       if (hasOpaquePixels(cropped)) {
-        return { image: cropped, parallax: spec.meta };
+        img = cropped;
+        break;
       }
     }
   } else if (sprites.length === 1) {
     const sp = sprites[0]!;
     if (sp.w < fullImg.width || sp.h < fullImg.height) {
-      return { image: cropImage(fullImg, sp.x, sp.y, sp.w, sp.h), parallax: spec.meta };
+      img = cropImage(fullImg, sp.x, sp.y, sp.w, sp.h);
     }
   }
-  return { image: fullImg, parallax: spec.meta };
+
+  // Seamless biome-specific framing & edge polish so no layer ever shows flat cutoffs or severed midair props:
+  if (key === 'bg/AP') {
+    // Scale 952x668 AP_background sky cleanly to 462x324 so both emerald moon & glowing horizon forest stay in-frame!
+    const targetH = 324;
+    const targetW = Math.max(320, Math.round((img.width * targetH) / img.height));
+    img = scaleNearestExact(img, targetW, targetH);
+  } else if (key === 'bg/AP_far') {
+    // Seamless horizon ridge built from glowing violet alien forest spires (AP_back deco_things 77x27, scaled 2x -> 154x54)
+    const spire = scaleNearestExact(img, img.width * 2, img.height * 2);
+    const spireFlip = flipHorizontal(spire);
+    const canvas = createImage(spire.width * 2, spire.height + 6);
+    blitAlpha(canvas, spire, 0, 0, spire.width, spire.height, 0, 6);
+    blitAlpha(canvas, spireFlip, 0, 0, spireFlip.width, spireFlip.height, spire.width, 10);
+    img = canvas;
+  } else if (key === 'bg/AP_mid') {
+    // Grounded bioluminescent alien bonsai grove (AP_back deco_shine bush 120x89), spaced cleanly with mirrored partner
+    const treeA = img;
+    const treeB = flipHorizontal(img);
+    const canvas = createImage(320, treeA.height + 8);
+    blitAlpha(canvas, treeA, 0, 0, treeA.width, treeA.height, 14, 8);
+    blitAlpha(canvas, treeB, 0, 0, treeB.width, treeB.height, 178, 4);
+    img = canvas;
+  } else if (key === 'bg/AP_near') {
+    // Low grounded violet primordial spires/moss tufts along the bottom foreground
+    const tuftA = img;
+    const tuftB = flipHorizontal(img);
+    const canvas = createImage(260, tuftA.height + 4);
+    blitAlpha(canvas, tuftA, 0, 0, tuftA.width, tuftA.height, 12, 4);
+    blitAlpha(canvas, tuftB, 0, 0, tuftB.width, tuftB.height, 144, 4);
+    img = canvas;
+  } else if (key === 'bg/TEMP_far') {
+    // Extend solid bottom cloud body downward by 84px so upper clouds never expose a flat bottom edge on scroll
+    img = extendBottomRows(img, 84);
+  } else if (key === 'bg/TEMP_mid') {
+    // Extend solid bottom cloud body downward by 42px for seamless 3-tier Temple cloud sea
+    img = extendBottomRows(img, 42);
+  } else if (key === 'bg/TDM_far' || key === 'bg/TDM_mid') {
+    // Softly feather bottom 28px alpha so sunset cumulus banks dissolve into the warm sky with zero hard horizontal cut!
+    img = featherBottomAlpha(img, 28);
+  } else if (key === 'bg/TDM_near') {
+    // Compose grounded warm trail bush horizon silhouettes from TM_object_arbusto (128x32 -> 4x 32x32 bushes)
+    const b0 = cropImage(fullImg, 0, 0, Math.min(32, fullImg.width), fullImg.height);
+    const b1 = fullImg.width >= 64 ? cropImage(fullImg, 32, 0, 32, fullImg.height) : flipHorizontal(b0);
+    const canvas = createImage(256, b0.height);
+    blitAlpha(canvas, b0, 0, 0, b0.width, b0.height, 16, 0);
+    blitAlpha(canvas, b1, 0, 0, b1.width, b1.height, 108, 2);
+    blitAlpha(canvas, flipHorizontal(b0), 0, 0, b0.width, b0.height, 192, 0);
+    img = canvas;
+  }
+
+  return { image: img, parallax: spec.meta };
 }
 
 function extractElectroSphinxBoss(db: UnityAssetDatabase): PackedAtlasResult | null {
