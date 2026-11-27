@@ -83,7 +83,7 @@ export const FORM_PARAMS = {
   FIRE_DASH_MAX_DUR: 0.4,
   LEAF_GRAVITY_SCALE: 0.5,
   LEAF_GLIDE_VY: -1.0,
-  LEAF_WIND_VY: 4.0,
+  LEAF_WIND_VY: 5.2,
   LEAF_COMBO_LOSS_UPGRADED: 0.25,
   LEAF_EXTRA_JUMP_VY: 13.0,
   ROCK_PAUSE_BEFORE: 0.05,
@@ -608,8 +608,12 @@ export interface HeroState {
   tongueDirX: number;
   tongueDirY: number;
   stompSpamTimer: number;
+  preStompTimer: number;
+  wallSlideCoyoteTimer: number;
+  wallSlideDir: -1 | 0 | 1;
   wallSalivaActive: boolean;
   wallSalivaTopY: number;
+  fireImmunityTimer: number;
 }
 
 export interface EnemyRuntime {
@@ -664,7 +668,7 @@ export interface BossRuntime {
 export interface ProjectileRuntime {
   id: number;
   fromHero: boolean;
-  kind: 'spit' | 'fireball' | 'gear' | 'plasma' | 'dark_orb' | 'missile' | 'shockwave' | 'thorn';
+  kind: 'spit' | 'fireball' | 'fire_wave' | 'gear' | 'plasma' | 'dark_orb' | 'missile' | 'shockwave' | 'thorn';
   x: number;
   y: number;
   prevX: number;
@@ -1123,9 +1127,9 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   right: 'ArrowRight',
   up: 'ArrowUp',
   down: 'ArrowDown',
-  jump: 'Space',
-  dash: 'ShiftLeft',
-  stomp: 'KeyS',
+  jump: 'KeyZ',
+  dash: 'KeyC',
+  stomp: 'KeyX',
   formNext: 'KeyE',
   formPrev: 'KeyQ',
   interact: 'KeyF',

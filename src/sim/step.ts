@@ -159,8 +159,12 @@ function createInitialHero(
     tongueDirX: 0,
     tongueDirY: -1,
     stompSpamTimer: 0,
+    preStompTimer: 0,
+    wallSlideCoyoteTimer: 0,
+    wallSlideDir: 0,
     wallSalivaActive: false,
     wallSalivaTopY: y,
+    fireImmunityTimer: 0,
   };
 }
 
