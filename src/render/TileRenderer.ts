@@ -668,18 +668,33 @@ export class TileRenderer {
             break;
           }
           case TileCode.Antigrav: {
-            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/antigrav', 'antigrav', sx, sy, timeSec, anim2, 'center');
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = 0.52;
+            const fieldTime = timeSec + (((tx * 3 + ty * 5) & 7) * 0.08);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/antigrav', 'antigrav', sx, sy, fieldTime, anim2, 'center');
+            ctx.globalAlpha = prevAlpha;
             break;
           }
           case TileCode.WindUp: {
-            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/wind_up', 'wind_up', sx, sy, timeSec, anim4, 'fill');
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = 0.52;
+            const fieldTime = timeSec + (((tx * 3 + ty * 5) & 7) * 0.08);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/wind_up', 'wind_up', sx, sy, fieldTime, anim4, 'fill');
+            ctx.globalAlpha = prevAlpha;
             break;
           }
           case TileCode.WindLeft: {
-            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/wind_left', 'wind_left', sx, sy, timeSec, anim4, 'fill');
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = 0.52;
+            const fieldTime = timeSec + (((tx * 3 + ty * 5) & 7) * 0.08);
+            this.drawSpecialTile(ctx, customPack, specialMap, 'tile/wind_left', 'wind_left', sx, sy, fieldTime, anim4, 'fill');
+            ctx.globalAlpha = prevAlpha;
             break;
           }
           case TileCode.WindRight: {
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = 0.52;
+            const fieldTime = timeSec + (((tx * 3 + ty * 5) & 7) * 0.08);
             this.drawSpecialTile(
               ctx,
               customPack,
@@ -688,10 +703,11 @@ export class TileRenderer {
               'wind_right',
               sx,
               sy,
-              timeSec,
+              fieldTime,
               anim4,
               'fill',
             );
+            ctx.globalAlpha = prevAlpha;
             break;
           }
           default:
@@ -783,8 +799,8 @@ export class TileRenderer {
             const dh = Math.min(32, frame.h);
             ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, sx, sy, 32, dh);
           } else if (align === 'bottom') {
-            const dw = frame.w <= 48 ? frame.w : 32;
-            const dh = frame.h <= 48 ? frame.h : 32;
+            const dw = frame.w <= 64 ? frame.w : 32;
+            const dh = frame.h <= 64 ? frame.h : 32;
             const dx = sx + ((32 - dw) >> 1);
             const dy = sy + (32 - dh);
             ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
@@ -911,27 +927,111 @@ export class TileRenderer {
       }
     }
 
-    // 2. Room exits glowing doorway portals (doors & form/coin gates)
+    // 2. Room exits — ornate carved pixel stone archway portals (doors & form/coin gates)
+    const biomePal = BIOME_PALETTES[state.biome];
     for (let i = 0; i < room.exits.length; i++) {
       const ex = room.exits[i]!;
       if (ex.dir !== 'door' && !ex.requiredForm && !ex.requiredCoins) continue;
       const sx = Math.round((ex.x - camX) * PPU + HALF_W);
       const sy = Math.round((camY - (ex.y + ex.height)) * PPU + HALF_H);
-      const pw = Math.round(ex.width * PPU);
-      const ph = Math.round(ex.height * PPU);
-      if (sx + pw < -16 || sx > VIEWPORT_W + 16) continue;
+      const pw = Math.max(28, Math.round(ex.width * PPU));
+      const ph = Math.max(40, Math.round(ex.height * PPU));
+      if (sx + pw < -24 || sx > VIEWPORT_W + 24) continue;
 
       const glowCol = ex.requiredForm
         ? HERO_FORM_PALETTES[ex.requiredForm][0]
         : UI_COLORS.frameGold;
+      const glowHi = ex.requiredForm
+        ? HERO_FORM_PALETTES[ex.requiredForm][4]
+        : HIGHLIGHT_CREAM;
+      const cx = sx + (pw >> 1);
+      const pillarW = 6;
+      const innerX = sx + pillarW;
+      const innerW = Math.max(12, pw - pillarW * 2);
+      const innerY = sy + 8;
+      const innerH = Math.max(16, ph - 8);
+
+      // Outer dark-plum outline silhouette (stepped arch crown + pillars + base plinths)
       ctx.fillStyle = OUTLINE_DARK;
-      ctx.fillRect(sx, sy, pw, ph);
+      ctx.fillRect(sx - 4, sy - 4, pw + 8, 9);
+      ctx.fillRect(sx - 1, sy - 7, pw + 2, 5);
+      ctx.fillRect(sx - 1, sy + 3, pw + 2, ph - 3);
+      ctx.fillRect(sx - 3, sy + ph - 6, pw + 6, 6);
+
+      // Carved stone lintel & stepped arch crown
+      ctx.fillStyle = biomePal.earthDark;
+      ctx.fillRect(sx - 3, sy - 3, pw + 6, 7);
+      ctx.fillStyle = biomePal.earthMid;
+      ctx.fillRect(sx - 2, sy - 3, pw + 4, 5);
+      ctx.fillStyle = biomePal.earthLight;
+      ctx.fillRect(sx - 2, sy - 3, pw + 4, 2);
+      ctx.fillRect(sx, sy - 6, pw, 3);
+      ctx.fillStyle = biomePal.earthMid;
+      ctx.fillRect(sx + 1, sy - 5, pw - 2, 2);
+
+      // Left & right carved stone masonry columns + base plinths
+      ctx.fillStyle = biomePal.earthMid;
+      ctx.fillRect(sx, sy + 4, pillarW, ph - 4);
+      ctx.fillRect(sx + pw - pillarW, sy + 4, pillarW, ph - 4);
+      ctx.fillStyle = biomePal.earthLight;
+      ctx.fillRect(sx + 1, sy + 4, 2, ph - 8);
+      ctx.fillRect(sx + pw - pillarW + 1, sy + 4, 2, ph - 8);
+      ctx.fillStyle = biomePal.earthDeep;
+      ctx.fillRect(sx + pillarW - 1, sy + 4, 1, ph - 4);
+      ctx.fillRect(sx + pw - 1, sy + 4, 1, ph - 4);
+      // Horizontal masonry mortar seams on pillars
+      for (let my = sy + 14; my < sy + ph - 8; my += 12) {
+        ctx.fillRect(sx, my, pillarW, 1);
+        ctx.fillRect(sx + pw - pillarW, my, pillarW, 1);
+      }
+      // Grounded base plinth steps
+      ctx.fillStyle = biomePal.earthDark;
+      ctx.fillRect(sx - 2, sy + ph - 5, pillarW + 3, 4);
+      ctx.fillRect(sx + pw - pillarW - 1, sy + ph - 5, pillarW + 3, 4);
+      ctx.fillStyle = biomePal.earthLight;
+      ctx.fillRect(sx - 2, sy + ph - 5, pillarW + 2, 1);
+      ctx.fillRect(sx + pw - pillarW - 1, sy + ph - 5, pillarW + 2, 1);
+
+      // Deep enchanted sanctuary portal interior + inner arched stone bevel
+      ctx.fillStyle = '#120822';
+      ctx.fillRect(innerX, innerY, innerW, innerH);
+      ctx.fillStyle = OUTLINE_DARK;
+      ctx.fillRect(innerX, innerY, 3, 3);
+      ctx.fillRect(innerX + innerW - 3, innerY, 3, 3);
+
+      // Subtle glowing inner rune rim & animated shimmering portal veil
+      const prevAlpha = ctx.globalAlpha;
+      const pulse = 0.22 + 0.1 * Math.sin(timeSec * 3.2 + i);
       ctx.fillStyle = glowCol;
-      ctx.fillRect(sx + 2, sy + 2, Math.max(2, pw - 4), Math.max(2, ph - 4));
-      ctx.fillStyle = '#1b0f30';
-      ctx.fillRect(sx + 4, sy + 4, Math.max(2, pw - 8), Math.max(2, ph - 8));
+      ctx.globalAlpha = pulse;
+      ctx.fillRect(innerX + 2, innerY + 2, Math.max(4, innerW - 4), Math.max(4, innerH - 2));
+      ctx.globalAlpha = pulse * 0.9;
+      ctx.fillStyle = glowHi;
+      const coreW = Math.max(4, innerW >> 1);
+      ctx.fillRect(cx - (coreW >> 1), innerY + 4, coreW, Math.max(4, innerH - 6));
+
+      // Gently rising enchanted portal sparkles
+      ctx.globalAlpha = 0.72;
+      for (let m = 0; m < 3; m++) {
+        const mx = innerX + 3 + ((m * 11 + 5) % Math.max(4, innerW - 6));
+        const my = innerY + innerH - 3 - Math.round(wrapOffset(timeSec * (14 + m * 5) + m * 19, Math.max(8, innerH - 8)));
+        ctx.fillStyle = m === 1 ? glowHi : glowCol;
+        ctx.fillRect(mx, my, 2, 2);
+      }
+      ctx.globalAlpha = prevAlpha;
+
+      // Central arch keystone crest & glowing gem
+      ctx.fillStyle = OUTLINE_DARK;
+      ctx.fillRect(cx - 5, sy - 7, 10, 10);
+      ctx.fillStyle = biomePal.earthLight;
+      ctx.fillRect(cx - 4, sy - 6, 8, 8);
+      ctx.fillStyle = glowCol;
+      ctx.fillRect(cx - 2, sy - 4, 4, 4);
+      ctx.fillStyle = glowHi;
+      ctx.fillRect(cx - 1, sy - 3, 2, 2);
+
       if (ex.label) {
-        font.draw(ctx, ex.label, sx + (pw >> 1), sy - 11, 'gold', 1, 'center', true);
+        font.draw(ctx, ex.label, cx, Math.max(26, sy - 17), 'gold', 1, 'center', true);
       }
     }
 
@@ -950,7 +1050,7 @@ export class TileRenderer {
       const syBase = Math.round((camY - prop.y) * PPU + HALF_H);
       if (sx < -80 || sx > VIEWPORT_W + 80 || syBase < -80 || syBase > VIEWPORT_H + 96) continue;
 
-      this.renderProp(ctx, prop, state, sx, syBase, anim2, timeSec, propsMap, npcsMap, customPack, font, glyphs);
+      this.renderProp(ctx, prop, state, room, sx, syBase, anim2, timeSec, propsMap, npcsMap, customPack, font, glyphs);
     }
 
     // 4. Desert sandstorm wind streaks overlay
@@ -970,6 +1070,7 @@ export class TileRenderer {
    * Draws a foot-pivoted / clip-animated Custom Pack sprite at anchor (sx, syAnchor).
    * - anchorMode='bottom': rests sprite base on syAnchor (respects foot pivots >= 0.75, snaps center-pivoted sprites to bottom).
    * - anchorMode='center': centers sprite around (sx, syAnchor) (for hovering props like volt_node).
+   * - maxHeight > 0: scales oversized sprites down cleanly preserving aspect ratio so they never clip terraces.
    * Returns rendered pixel height (> 0) if drawn, or 0 if caller should use Built-In fallback.
    * Guarded so giant uncropped multi-frame sheets without `frames` metadata are NEVER drawn raw.
    */
@@ -983,6 +1084,7 @@ export class TileRenderer {
     timeSec: number,
     maxUncroppedSize = 96,
     anchorMode: 'bottom' | 'center' = 'bottom',
+    maxHeight = 0,
   ): number {
     if (!customPack || !customPack.customPackEnabled) return 0;
     const img = customPack.getSprite(key);
@@ -991,29 +1093,57 @@ export class TileRenderer {
     const entry = customPack.getEntry(key);
     const frame = selectEntryFrame(entry, clipName, timeSec);
     if (frame) {
-      const drawX = Math.round(sx - frame.w * frame.pivotX);
+      let drawW = frame.w;
+      let drawH = frame.h;
+      if (maxHeight > 0 && frame.h > maxHeight) {
+        const scale = maxHeight / frame.h;
+        drawW = Math.max(1, Math.round(frame.w * scale));
+        drawH = maxHeight;
+      }
+      const drawX = Math.round(sx - drawW * frame.pivotX);
       const effPivotY =
         anchorMode === 'center' ? 0.5 : frame.pivotY >= 0.75 ? frame.pivotY : 1.0;
-      const drawY = Math.round(syAnchor - frame.h * effPivotY);
-      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, drawX, drawY, frame.w, frame.h);
-      return frame.h;
+      const drawY = Math.round(syAnchor - drawH * effPivotY);
+      ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, drawX, drawY, drawW, drawH);
+      return drawH;
     }
 
     const iw = getDrawableW(img);
     const ih = getDrawableH(img);
     if (iw <= maxUncroppedSize && ih <= maxUncroppedSize) {
-      const drawY = anchorMode === 'center' ? Math.round(syAnchor - ih * 0.5) : syAnchor - ih;
-      ctx.drawImage(img, Math.round(sx - iw * 0.5), drawY);
-      return ih;
+      let drawW = iw;
+      let drawH = ih;
+      if (maxHeight > 0 && ih > maxHeight) {
+        const scale = maxHeight / ih;
+        drawW = Math.max(1, Math.round(iw * scale));
+        drawH = maxHeight;
+      }
+      const drawY = anchorMode === 'center' ? Math.round(syAnchor - drawH * 0.5) : syAnchor - drawH;
+      ctx.drawImage(img, 0, 0, iw, ih, Math.round(sx - drawW * 0.5), drawY, drawW, drawH);
+      return drawH;
     }
 
     return 0;
+  }
+
+  private hasOverheadCeiling(room: RoomDef, propX: number, propY: number, checkTiles: number): boolean {
+    const tx = Math.max(0, Math.min(room.widthTiles - 1, Math.floor(propX)));
+    const startTy = Math.floor(propY) + 1;
+    const endTy = Math.min(room.heightTiles - 1, startTy + checkTiles);
+    for (let ty = startTy; ty <= endTy; ty++) {
+      const code = room.tiles[ty * room.widthTiles + tx]!;
+      if (code === TileCode.Solid || code === TileCode.OneWay || code === TileCode.SecretWall) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private renderProp(
     ctx: CanvasRenderingContext2D,
     prop: InteractivePropDef,
     state: SimState,
+    room: RoomDef,
     sx: number,
     syBase: number,
     anim2: number,
@@ -1027,6 +1157,8 @@ export class TileRenderer {
     switch (prop.kind) {
       case 'shop_npc': {
         const shopId = prop.shopId ?? 'codex';
+        // Cap oversized Guardians (e.g. 128px Barnaby / 98px Barnacle) to 80px preserving aspect ratio
+        // so they stand imposing without spearing through overhead Hub terraces or colliding with labels.
         let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1036,6 +1168,8 @@ export class TileRenderer {
           syBase,
           timeSec,
           96,
+          'bottom',
+          80,
         );
         if (drawnH === 0) {
           const sheet = npcsMap.get(shopId);
@@ -1047,17 +1181,17 @@ export class TileRenderer {
           }
         }
 
-        // Crisp NPC floating name + interact speech pill cleanly positioned above sprite head
+        // Dynamic NPC floating name + interact speech pill anchored cleanly above actual rendered head
         const isActive = state.activeShopPrompt === shopId;
         const shortName = NPC_DISPLAY_NAMES[shopId];
-        const headClearY = syBase - Math.min(72, Math.max(36, drawnH));
+        const headClearY = syBase - Math.max(36, drawnH);
         if (isActive) {
           const bob = Math.round(Math.sin(timeSec * 6) * 2);
           const keyBadge = glyphs.interact.startsWith('[') ? glyphs.interact : `[${glyphs.interact}]`;
           const pillText = `${keyBadge} ${prop.label ?? shortName}`;
           const tw = font.measure(pillText, 1);
           const px = Math.round(sx - tw * 0.5 - 5);
-          const py = headClearY - 15 + bob;
+          const py = Math.max(26, headClearY - 16) + bob;
           ctx.fillStyle = OUTLINE_DARK;
           ctx.fillRect(px - 1, py - 1, tw + 12, 13);
           ctx.fillStyle = UI_COLORS.frameGold;
@@ -1066,7 +1200,7 @@ export class TileRenderer {
           ctx.fillRect(px + 1, py + 1, tw + 8, 9);
           font.draw(ctx, pillText, sx, py + 2, 'gold', 1, 'center', false);
         } else {
-          font.draw(ctx, shortName, sx, headClearY - 10, 'cream', 1, 'center', true);
+          font.draw(ctx, shortName, sx, Math.max(26, headClearY - 9), 'cream', 1, 'center', true);
         }
         break;
       }
@@ -1163,6 +1297,7 @@ export class TileRenderer {
 
       case 'teleporter': {
         const unlocked = state.progress.unlockedTeleporters.includes(state.roomId);
+        const lowCeiling = this.hasOverheadCeiling(room, prop.x, prop.y, 4);
         let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1172,6 +1307,8 @@ export class TileRenderer {
           syBase,
           timeSec,
           96,
+          'bottom',
+          lowCeiling ? 76 : 0,
         );
         if (drawnH === 0) {
           const spr = propsMap.get('teleporter');
@@ -1184,7 +1321,7 @@ export class TileRenderer {
           ctx,
           unlocked ? 'WARP' : 'PORTAL',
           sx,
-          syBase - Math.max(44, drawnH) - 9,
+          Math.max(26, syBase - Math.max(44, drawnH) - 9),
           unlocked ? 'cyan' : 'dim',
           1,
           'center',
@@ -1234,6 +1371,7 @@ export class TileRenderer {
       }
 
       case 'animal_house': {
+        // Cap animal house height cleanly to <= 64px (aspect-preserved) so it sits cleanly between Hub terraces with visible label
         let drawnH = this.drawCustomFramedProp(
           ctx,
           customPack,
@@ -1243,6 +1381,8 @@ export class TileRenderer {
           syBase,
           timeSec,
           96,
+          'bottom',
+          64,
         );
         if (drawnH === 0) {
           const spr = propsMap.get('animal_house');
@@ -1257,7 +1397,7 @@ export class TileRenderer {
             ctx,
             prop.animalName,
             sx,
-            syBase - Math.max(44, drawnH) - 9,
+            Math.max(26, syBase - Math.max(44, drawnH) - 9),
             rescued ? 'green' : 'dim',
             1,
             'center',
