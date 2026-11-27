@@ -269,18 +269,22 @@ class CustomAssetPackManager implements IAssetPackManager {
       const entries = Object.values(json.entries);
       const nextImages = new Map<string, HTMLImageElement>();
 
-      // In browser contexts decode all pack images in parallel; in headless/Node contexts keep manifest availability.
+      // In browser contexts decode all pack images in parallel batches; in headless/Node contexts keep manifest availability.
       if (typeof Image !== 'undefined') {
-        const results = await Promise.all(
-          entries.map(async (entry) => {
-            const url = `${CUSTOM_PACK_BASE_URL}/${normalizeRelativePath(entry.path)}`;
-            const img = await loadImageFromUrl(url);
-            return [entry.key, img] as const;
-          }),
-        );
-        for (const [key, img] of results) {
-          if (img) {
-            nextImages.set(key, img);
+        const BATCH_SIZE = 32;
+        for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+          const batch = entries.slice(i, i + BATCH_SIZE);
+          const results = await Promise.all(
+            batch.map(async (entry) => {
+              const url = `${CUSTOM_PACK_BASE_URL}/${normalizeRelativePath(entry.path)}`;
+              const img = await loadImageFromUrl(url);
+              return [entry.key, img] as const;
+            }),
+          );
+          for (const [key, img] of results) {
+            if (img) {
+              nextImages.set(key, img);
+            }
           }
         }
       }
@@ -313,23 +317,27 @@ class CustomAssetPackManager implements IAssetPackManager {
       const entries = Object.values(storedManifest.entries);
 
       if (typeof Image !== 'undefined' && typeof URL !== 'undefined') {
-        const results = await Promise.all(
-          entries.map(async (entry) => {
-            const blob = await idbGet<Blob>(db, `asset:${entry.key}`);
-            if (!blob) return [entry.key, null, null] as const;
-            const url = URL.createObjectURL(blob);
-            const img = await loadImageFromUrl(url);
-            if (!img) {
-              URL.revokeObjectURL(url);
-              return [entry.key, null, null] as const;
+        const BATCH_SIZE = 32;
+        for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+          const batch = entries.slice(i, i + BATCH_SIZE);
+          const results = await Promise.all(
+            batch.map(async (entry) => {
+              const blob = await idbGet<Blob>(db, `asset:${entry.key}`);
+              if (!blob) return [entry.key, null, null] as const;
+              const url = URL.createObjectURL(blob);
+              const img = await loadImageFromUrl(url);
+              if (!img) {
+                URL.revokeObjectURL(url);
+                return [entry.key, null, null] as const;
+              }
+              return [entry.key, img, url] as const;
+            }),
+          );
+          for (const [key, img, url] of results) {
+            if (img && url) {
+              nextImages.set(key, img);
+              nextUrls.push(url);
             }
-            return [entry.key, img, url] as const;
-          }),
-        );
-        for (const [key, img, url] of results) {
-          if (img && url) {
-            nextImages.set(key, img);
-            nextUrls.push(url);
           }
         }
       }
@@ -427,6 +435,7 @@ class CustomAssetPackManager implements IAssetPackManager {
     const nextImages = new Map<string, HTMLImageElement>();
     const nextUrls: string[] = [];
 
+    const matchedEntries: Array<{ key: string; file: File }> = [];
     for (const entry of Object.values(validManifest.entries)) {
       const normalized = normalizeRelativePath(entry.path);
       const matchedFile =
@@ -435,14 +444,29 @@ class CustomAssetPackManager implements IAssetPackManager {
         continue;
       }
       blobsToStore.set(entry.key, matchedFile);
-      if (typeof Image !== 'undefined' && typeof URL !== 'undefined') {
-        const url = URL.createObjectURL(matchedFile);
-        const img = await loadImageFromUrl(url);
-        if (img) {
-          nextImages.set(entry.key, img);
-          nextUrls.push(url);
-        } else {
-          URL.revokeObjectURL(url);
+      matchedEntries.push({ key: entry.key, file: matchedFile });
+    }
+
+    if (typeof Image !== 'undefined' && typeof URL !== 'undefined') {
+      const BATCH_SIZE = 24;
+      for (let i = 0; i < matchedEntries.length; i += BATCH_SIZE) {
+        const batch = matchedEntries.slice(i, i + BATCH_SIZE);
+        const decoded = await Promise.all(
+          batch.map(async ({ key, file }) => {
+            const url = URL.createObjectURL(file);
+            const img = await loadImageFromUrl(url);
+            if (!img) {
+              URL.revokeObjectURL(url);
+              return null;
+            }
+            return { key, img, url };
+          }),
+        );
+        for (const item of decoded) {
+          if (item) {
+            nextImages.set(item.key, item.img);
+            nextUrls.push(item.url);
+          }
         }
       }
     }
