@@ -151,6 +151,16 @@ function createInitialHero(
     hitFlashTimer: 0,
     animTimer: 0,
     dashRingAngle: 0,
+    tongueKind: 'none',
+    tongueTimer: 0,
+    tongueDuration: 0,
+    tongueOriginX: x,
+    tongueOriginY: y,
+    tongueDirX: 0,
+    tongueDirY: -1,
+    stompSpamTimer: 0,
+    wallSalivaActive: false,
+    wallSalivaTopY: y,
   };
 }
 

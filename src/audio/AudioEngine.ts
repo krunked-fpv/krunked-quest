@@ -184,6 +184,8 @@ export class AudioEngine implements IAudioEngine {
       } else if (
         ev.type === 'jump' ||
         ev.type === 'dash' ||
+        ev.type === 'ground_stomp' ||
+        ev.type === 'tongue_lash' ||
         ev.type === 'enemy_hit' ||
         ev.type === 'stomp_impact'
       ) {
@@ -231,6 +233,8 @@ export class AudioEngine implements IAudioEngine {
       case 'land':
       case 'wall_jump':
       case 'dash':
+      case 'ground_stomp':
+      case 'tongue_lash':
       case 'stomp_start':
       case 'stomp_impact':
       case 'uppercut':

@@ -26,6 +26,8 @@ const EVENT_COOLDOWNS_MS: Readonly<Record<SimEvent['type'], number>> = {
   land: 40,
   wall_jump: 35,
   dash: 40,
+  ground_stomp: 35,
+  tongue_lash: 30,
   stomp_start: 40,
   stomp_impact: 35,
   uppercut: 40,
@@ -195,6 +197,12 @@ export class ProceduralSynth {
         break;
       case 'dash':
         this.sfxDash(event.kind, clampedPan);
+        break;
+      case 'ground_stomp':
+        this.sfxGroundStomp(event.fiery, clampedPan);
+        break;
+      case 'tongue_lash':
+        this.sfxTongueLash(event.kind, clampedPan);
         break;
       case 'stomp_start':
         this.sfxStompStart(clampedPan);
@@ -991,6 +999,78 @@ export class ProceduralSynth {
       gain: 0.16,
       pan: wallPan,
       priority: 2,
+    });
+  }
+
+  private sfxGroundStomp(fiery: boolean, pan: number): void {
+    const t = this.ctx!.currentTime;
+    const j = this.jitter(0.04);
+    // Elastic downward tongue slam + upward spring pop
+    this.spawnTone({
+      wave: 'triangle',
+      startFreq: 195 * j,
+      endFreq: 52 * j,
+      startTime: t,
+      duration: 0.11,
+      gain: 0.25,
+      pan,
+      priority: 2,
+    });
+    this.spawnTone({
+      wave: 'square',
+      startFreq: 210 * j,
+      endFreq: 640 * j,
+      startTime: t + 0.02,
+      duration: 0.12,
+      gain: 0.15,
+      filterHz: 2800,
+      pan,
+      priority: 2,
+    });
+    if (fiery) {
+      this.spawnNoise({
+        startTime: t,
+        duration: 0.18,
+        gain: 0.2,
+        filterType: 'bandpass',
+        startHz: 1500,
+        endHz: 320,
+        q: 1.1,
+        retro: true,
+        pan,
+        priority: 2,
+      });
+    }
+  }
+
+  private sfxTongueLash(
+    kind: 'ground_stomp' | 'ground_dash' | 'wall_dash' | 'air_stomp',
+    pan: number,
+  ): void {
+    const t = this.ctx!.currentTime;
+    const j = this.jitter(0.045);
+    const startHz = kind === 'air_stomp' ? 520 : kind === 'wall_dash' ? 440 : 360;
+    const endHz = kind === 'air_stomp' ? 160 : 880;
+    this.spawnTone({
+      wave: 'triangle',
+      startFreq: startHz * j,
+      endFreq: endHz * j,
+      startTime: t,
+      duration: 0.08,
+      gain: 0.16,
+      pan,
+      priority: 2,
+    });
+    this.spawnNoise({
+      startTime: t,
+      duration: 0.055,
+      gain: 0.11,
+      filterType: 'bandpass',
+      startHz: 1450,
+      endHz: 620,
+      q: 1.8,
+      pan,
+      priority: 1,
     });
   }
 

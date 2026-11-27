@@ -519,8 +519,10 @@ export type HeroActionState =
   | 'run'
   | 'jump'
   | 'fall'
+  | 'flip'
   | 'wall_slide'
   | 'vine_slide'
+  | 'ground_stomp'
   | 'ground_dash'
   | 'wall_dash'
   | 'air_stomp'
@@ -532,6 +534,14 @@ export type HeroActionState =
   | 'shadow_blink'
   | 'hurt'
   | 'dead';
+
+export type HeroTongueKind =
+  | 'none'
+  | 'ground_stomp'
+  | 'air_stomp'
+  | 'ground_dash'
+  | 'wall_dash'
+  | 'wall_slide';
 
 export interface HeroState {
   x: number;
@@ -589,6 +599,17 @@ export interface HeroState {
   hitFlashTimer: number;
   animTimer: number;
   dashRingAngle: number;
+  // Tongue, stomp & wall-saliva mechanical/visual state
+  tongueKind: HeroTongueKind;
+  tongueTimer: number;
+  tongueDuration: number;
+  tongueOriginX: number;
+  tongueOriginY: number;
+  tongueDirX: number;
+  tongueDirY: number;
+  stompSpamTimer: number;
+  wallSalivaActive: boolean;
+  wallSalivaTopY: number;
 }
 
 export interface EnemyRuntime {
@@ -789,6 +810,15 @@ export type SimEvent =
   | { type: 'land'; x: number; y: number; heavy: boolean }
   | { type: 'wall_jump'; x: number; y: number; dir: -1 | 1 }
   | { type: 'dash'; x: number; y: number; kind: 'ground' | 'wall' | 'fire' | 'volt' | 'shadow' }
+  | { type: 'ground_stomp'; x: number; y: number; fiery: boolean }
+  | {
+      type: 'tongue_lash';
+      x: number;
+      y: number;
+      kind: 'ground_stomp' | 'ground_dash' | 'wall_dash' | 'air_stomp';
+      dirX: number;
+      dirY: number;
+    }
   | { type: 'stomp_start'; x: number; y: number }
   | { type: 'stomp_impact'; x: number; y: number; explosive: boolean }
   | { type: 'uppercut'; x: number; y: number }
