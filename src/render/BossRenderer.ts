@@ -493,7 +493,15 @@ export class BossRenderer {
       }
     }
 
-    // Bespoke multi-part animated pixel rendering per BossId
+    // Built-In Studio-Grade 112x112 4-Frame 16-Bit Pixel-Art Boss Renderer!
+    const baked = atlas.bosses.get(boss.id);
+    if (baked && baked.sheet.width >= baked.frameW) {
+      this.renderBakedBuiltInBoss(ctx, state, boss, wx, wy, cx, cy, footY, flash, timeSec, baked, atlas);
+      ctx.globalAlpha = prevAlpha;
+      return;
+    }
+
+    // Headless fallback multi-part pixel rendering per BossId
     switch (boss.id) {
       case 'dino_behemoth':
         this.renderDinoBehemoth(ctx, boss, cx, footY, flash, timeSec);
@@ -605,6 +613,129 @@ export class BossRenderer {
     }
 
     ctx.globalAlpha = prevAlpha;
+  }
+
+  /**
+   * Renders our pre-baked 112x112 4-frame 16-bit pixel-art boss sheets with state-driven
+   * frame selection, hover/stride animation, ground contact shadow, white hit-flash, and
+   * Primal Eye's live hero-tracking iris + orbiting thorny vine pods.
+   */
+  private renderBakedBuiltInBoss(
+    ctx: CanvasRenderingContext2D,
+    state: SimState,
+    boss: BossRuntime,
+    wx: number,
+    wy: number,
+    cx: number,
+    cy: number,
+    footY: number,
+    flash: boolean,
+    timeSec: number,
+    baked: { readonly sheet: HTMLCanvasElement; readonly flash: HTMLCanvasElement; readonly frameW: number; readonly frameH: number },
+    atlas: ProceduralPixelAtlas,
+  ): void {
+    const fw = baked.frameW;
+    const fh = baked.frameH;
+    const numFrames = Math.max(1, (baked.sheet.width / fw) | 0);
+
+    let frameIdx = 0;
+    if (numFrames >= 4) {
+      if (isTelegraphState(boss.state)) {
+        frameIdx = 2;
+      } else if (isSlamState(boss.state) || isChargeOrDashState(boss.state) || isLaserState(boss.state)) {
+        frameIdx = 3;
+      } else {
+        frameIdx = Math.floor(timeSec * (Math.abs(boss.vx) > 0.8 ? 7 : 3.5)) & 1;
+      }
+    } else {
+      frameIdx = Math.floor(timeSec * 4) % numFrames;
+    }
+
+    const isFloating =
+      boss.id === 'primal_eye' ||
+      boss.id === 'bone_colossus' ||
+      boss.id === 'electro_sphinx' ||
+      boss.id === 'nightmare_sovereign';
+
+    const hover = isFloating ? Math.round(Math.sin(timeSec * 3.4) * 3) : 0;
+    let drawTop = isFloating ? cy + hover - (fh >> 1) : footY - fh + 8;
+    // Keep colossal floating bosses cleanly visible inside the 576x324 viewport
+    if (drawTop < 12) drawTop = 12;
+    if (isFloating) {
+      const maxTop = Math.max(12, VIEWPORT_H - 42 - fh);
+      if (drawTop > maxTop) drawTop = maxTop;
+    }
+
+    // Crisp grounded pixel contact shadow for grounded bosses
+    if (!isFloating) {
+      ctx.globalAlpha = 0.36;
+      ctx.fillStyle = OUTLINE_DARK;
+      ctx.fillRect(cx - 38, footY - 2, 76, 4);
+      ctx.fillRect(cx - 30, footY - 3, 60, 2);
+      ctx.globalAlpha = 1;
+    }
+
+    const img = flash ? baked.flash : baked.sheet;
+    const flipX =
+      boss.facing < 0 &&
+      boss.id !== 'primal_eye' &&
+      boss.id !== 'electro_sphinx' &&
+      boss.id !== 'bone_colossus' &&
+      boss.id !== 'nightmare_sovereign';
+
+    ctx.save();
+    ctx.translate(cx, drawTop);
+    if (flipX) ctx.scale(-1, 1);
+    ctx.drawImage(img, frameIdx * fw, 0, fw, fh, -(fw >> 1), 0, fw, fh);
+    ctx.restore();
+
+    // Primal Eye dynamic hero-tracking green cat-iris + orbiting thorny vine pods!
+    if (boss.id === 'primal_eye') {
+      const visualCy = drawTop + (fh >> 1);
+      if (!flash) {
+        const heroCx = state.hero.x + state.hero.width * 0.5;
+        const heroCy = state.hero.y + state.hero.height * 0.5;
+        const bossCx = wx + boss.width * 0.5;
+        const bossCy = wy + boss.height * 0.5;
+        const dx = heroCx - bossCx;
+        const dy = heroCy - bossCy;
+        const dist = Math.hypot(dx, dy) || 1;
+        const lx = Math.round((dx / dist) * 10);
+        const ly = Math.round((-dy / dist) * 7);
+        if (atlas.primalEyeIris) {
+          ctx.drawImage(
+            atlas.primalEyeIris,
+            cx + lx - (atlas.primalEyeIris.width >> 1),
+            visualCy + ly - (atlas.primalEyeIris.height >> 1),
+          );
+        }
+      }
+
+      const podCount = boss.phase === 3 ? 6 : 4;
+      const orbitR = 54 + (boss.phase - 1) * 6 + Math.round(Math.sin(timeSec * 3.2) * 4);
+      const orbitSpd = boss.phase === 3 ? 2.5 : boss.phase === 2 ? 1.85 : 1.25;
+      for (let p = 0; p < podCount; p++) {
+        const ang = timeSec * orbitSpd + (p / podCount) * TWO_PI;
+        const px = Math.round(cx + Math.cos(ang) * orbitR);
+        const py = Math.round(visualCy + Math.sin(ang) * orbitR * 0.74);
+        for (let seg = 1; seg <= 3; seg++) {
+          const frac = seg * 0.24;
+          const sx = Math.round(cx + (px - cx) * frac);
+          const sy = Math.round(visualCy + (py - visualCy) * frac);
+          ctx.fillStyle = OUTLINE_DARK;
+          ctx.fillRect(sx - 2, sy - 2, 5, 5);
+          ctx.fillStyle = flash ? FLASH_WHITE : EYE_MOSS_MID;
+          ctx.fillRect(sx - 1, sy - 1, 3, 3);
+        }
+        if (atlas.primalEyeTendril && !flash) {
+          ctx.drawImage(
+            atlas.primalEyeTendril,
+            px - (atlas.primalEyeTendril.width >> 1),
+            py - (atlas.primalEyeTendril.height >> 1),
+          );
+        }
+      }
+    }
   }
 
   // ==========================================================================

@@ -142,32 +142,32 @@ export class BiomeRenderer {
     switch (state.biome) {
       case 'MLAIR':
       case 'OPOUSO':
-        this.drawWarmSunbeams(ctx, pal, state.biome === 'OPOUSO', camX, timeSec, customBgActive ? 0.45 : 1.0);
+        this.drawWarmSunbeams(ctx, pal, state.biome === 'OPOUSO', camX, timeSec, customBgActive ? 0.45 : 0.55);
         break;
       case 'TDM':
-        this.drawTrailMidground(ctx, pal, camX, timeSec, customBgActive);
+        this.drawTrailMidground(ctx, pal, camX, timeSec, true);
         break;
       case 'FLIN':
       case 'AP':
-        this.drawCanopyLightShafts(ctx, pal, state.biome === 'FLIN', camX, timeSec, customBgActive ? 0.55 : 1.0);
+        this.drawCanopyLightShafts(ctx, pal, state.biome === 'FLIN', camX, timeSec, customBgActive ? 0.55 : 0.65);
         break;
       case 'ATVC':
-        this.drawVolcanicHeatHaze(ctx, pal, camX, camY, timeSec, customBgActive);
+        this.drawVolcanicHeatHaze(ctx, pal, camX, camY, timeSec, true);
         break;
       case 'DSI':
-        this.drawDesertSunShimmer(ctx, pal, camX, room.sandstormDir ?? 0, timeSec, customBgActive);
+        this.drawDesertSunShimmer(ctx, pal, camX, room.sandstormDir ?? 0, timeSec, true);
         break;
       case 'LAB':
-        this.drawLabyrinthGears(ctx, pal, camX, camY, timeSec, customBgActive ? 0.22 : 0.48);
+        this.drawLabyrinthGears(ctx, pal, camX, camY, timeSec, customBgActive ? 0.22 : 0.3);
         break;
       case 'TEMP':
-        this.drawTempleCircuitRings(ctx, pal, camX, camY, timeSec, customBgActive ? 0.55 : 1.0);
+        this.drawTempleCircuitRings(ctx, pal, camX, camY, timeSec, customBgActive ? 0.55 : 0.55);
         break;
       case 'EVIL':
-        this.drawNightmareEclipseAndLightning(ctx, pal, camX, timeSec, !customBgActive);
+        this.drawNightmareEclipseAndLightning(ctx, pal, camX, timeSec, false);
         break;
       case 'GSHIP':
-        this.drawGhostShipLanterns(ctx, pal, state.ghostShip.hazardTier, camX, timeSec, customBgActive ? 0.72 : 1.0);
+        this.drawGhostShipLanterns(ctx, pal, state.ghostShip.hazardTier, camX, timeSec, customBgActive ? 0.72 : 0.78);
         break;
     }
 
@@ -213,7 +213,7 @@ export class BiomeRenderer {
         this.drawForgeSparks(ctx, pal, camX, camY, timeSec);
         break;
       case 'TEMP':
-        this.drawAntigravScanlines(ctx, pal, camY, timeSec, fgScale, !customBgActive);
+        this.drawAntigravScanlines(ctx, pal, camY, timeSec, fgScale, false);
         break;
       case 'EVIL':
         this.drawFloatingVioletRunes(ctx, pal, camX, camY, timeSec, fgScale);

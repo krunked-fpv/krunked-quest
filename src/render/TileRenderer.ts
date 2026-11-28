@@ -295,7 +295,7 @@ export class TileRenderer {
       return;
     }
 
-    // Built-In upgraded 4-layer procedural pixel-art parallax
+    // Built-In upgraded 4-layer full-height 576x344 16-bit pixel-art parallax
     if (!pSet) {
       ctx.fillStyle = BIOME_PALETTES[biome].skyTop;
       ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H);
@@ -304,27 +304,28 @@ export class TileRenderer {
 
     ctx.drawImage(pSet.sky, 0, 0);
 
-    const vShiftFar = Math.max(-24, Math.min(24, Math.round(camY * 2.5)));
-    const vShiftMid = Math.max(-36, Math.min(36, Math.round(camY * 5.0)));
-    const vShiftNear = Math.max(-44, Math.min(44, Math.round(camY * 8.0)));
+    const relCamY = camY - 5.5;
+    const vShiftFar = Math.max(-10, Math.min(10, Math.round(relCamY * 1.4)));
+    const vShiftMid = Math.max(-10, Math.min(10, Math.round(relCamY * 2.4)));
+    const vShiftNear = Math.max(-10, Math.min(10, Math.round(relCamY * 3.6)));
 
     const farW = pSet.far.width;
-    const farOff = Math.round(wrapOffset(camX * PPU * 0.08 + timeSec * 1.5, farW));
-    const farY = 124 + vShiftFar;
+    const farOff = Math.round(wrapOffset(camX * PPU * 0.08 + timeSec * 1.2, farW));
+    const farY = pSet.far.height >= VIEWPORT_H ? -10 + vShiftFar : 124 + vShiftFar;
     for (let x = -farOff; x < VIEWPORT_W; x += farW) {
       ctx.drawImage(pSet.far, x, farY);
     }
 
     const midW = pSet.mid.width;
     const midOff = Math.round(wrapOffset(camX * PPU * 0.2, midW));
-    const midY = 148 + vShiftMid;
+    const midY = pSet.mid.height >= VIEWPORT_H ? -10 + vShiftMid : 148 + vShiftMid;
     for (let x = -midOff; x < VIEWPORT_W; x += midW) {
       ctx.drawImage(pSet.mid, x, midY);
     }
 
     const nearW = pSet.near.width;
-    const nearOff = Math.round(wrapOffset(camX * PPU * 0.42, nearW));
-    const nearY = 192 + vShiftNear;
+    const nearOff = Math.round(wrapOffset(camX * PPU * 0.4, nearW));
+    const nearY = pSet.near.height >= VIEWPORT_H ? -10 + vShiftNear : 192 + vShiftNear;
     for (let x = -nearOff; x < VIEWPORT_W; x += nearW) {
       ctx.drawImage(pSet.near, x, nearY);
     }

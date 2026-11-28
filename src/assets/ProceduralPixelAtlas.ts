@@ -24,6 +24,8 @@ import {
   mixHex,
 } from './palettes.js';
 import { getBuiltInWorldArt, type BiomeParallaxSet } from './BiomeArtBaker.js';
+import { bakeAllBossSprites } from './BossPixelArt.js';
+import { darkenForSelOut } from './PixelCraft.js';
 
 export type { BiomeParallaxSet };
 
@@ -271,8 +273,29 @@ class PixelBuf {
     }
   }
 
-  /** Crisp 1px 4-connected dark outline around all opaque pixels. */
+  /** Authentic 16-bit selective colored outline (sunlit top-left hue-matched, deep plum shadow bottom-right). */
   public outline(outlineCol: number): void {
+    const src = new Uint32Array(this.pixels);
+    const w = this.w;
+    const h = this.h;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        if (src[row + x] !== 0) continue;
+        const up = y > 0 ? src[row - w + x]! : 0;
+        const dn = y + 1 < h ? src[row + w + x]! : 0;
+        const lt = x > 0 ? src[row + x - 1]! : 0;
+        const rt = x + 1 < w ? src[row + x + 1]! : 0;
+        const sample = dn || rt || lt || up;
+        if (!sample) continue;
+        const isSunlitEdge = (dn !== 0 || rt !== 0) && up === 0 && lt === 0;
+        this.pixels[row + x] = darkenForSelOut(sample, outlineCol, isSunlitEdge ? 0.56 : 0.88);
+      }
+    }
+  }
+
+  /** Crisp uniform 1px solid outline (used for neon ectoplasm spirit glow or high-contrast VFX). */
+  public solidOutline(outlineCol: number): void {
     const src = new Uint32Array(this.pixels);
     const w = this.w;
     const h = this.h;
@@ -1004,26 +1027,29 @@ function bakeCollectibles(): Map<string, HTMLCanvasElement> {
     map.set('coin', sheet.toCanvas());
   }
 
-  // Crystal (4 frames sparkling faceted gem 16x20)
+  // Crystal (4 frames vibrant magenta-amethyst sparkling faceted gem 16x20!)
   {
     const sheet = new PixelBuf(64, 20);
     const b = new PixelBuf(16, 20);
-    const hi = hexToAbgr(UI_COLORS.crystalLight);
-    const mid = hexToAbgr(UI_COLORS.crystalMid);
-    const dark = hexToAbgr(UI_COLORS.crystalDark);
-    const deep = hexToAbgr(UI_COLORS.crystalDeep);
+    const spec = hexToAbgr('#ffe6ff');
+    const hi = hexToAbgr('#ff59e6');
+    const mid = hexToAbgr('#c424f2');
+    const dark = hexToAbgr('#7814c4');
+    const deep = hexToAbgr('#3b0a73');
     for (let f = 0; f < 4; f++) {
       b.clear();
       b.tri(8, 2, 2, 10, 8, 18, mid);
       b.tri(8, 2, 14, 10, 8, 18, dark);
-      b.tri(8, 2, 4, 10, 8, 10, hi);
-      b.tri(8, 18, 12, 10, 8, 10, deep);
+      b.tri(8, 2, 3, 10, 8, 10, hi);
+      b.tri(8, 18, 13, 10, 8, 10, deep);
+      b.tri(8, 4, 5, 10, 8, 10, spec);
       if (f === 1 || f === 3) {
         b.px(6, 6, cWhite);
         b.px(7, 5, cWhite);
         b.px(7, 7, cWhite);
+        b.px(8, 6, cWhite);
       }
-      b.outline(cOut);
+      b.outline(hexToAbgr('#2b0852'));
       sheet.blit(b, f * 16, 0);
     }
     map.set('crystal', sheet.toCanvas());
@@ -1534,14 +1560,26 @@ function bakeEnemy(spec: EnemyVisualSpec): EnemySpriteSet {
         b.rect(cx + 6, 18 + bob, 6, 3, hi);
         break;
 
-      case 'ghost':
-        b.ellipseShaded(cx, cy - 2 + bob, 10, 9.5, hi, mid, dark, cWhite);
-        b.tri(cx - 9, cy + 3 + bob, cx - 7, fh - 3 + f, cx - 3, cy + 5 + bob, mid);
-        b.tri(cx - 3, cy + 5 + bob, cx, fh - 2 - f, cx + 3, cy + 5 + bob, mid);
-        b.tri(cx + 3, cy + 5 + bob, cx + 7, fh - 3 + f, cx + 9, cy + 3 + bob, mid);
-        b.rect(cx - 5, cy - 4 + bob, 3, 4, acc);
-        b.rect(cx + 2, cy - 4 + bob, 3, 4, acc);
-        break;
+      case 'ghost': {
+        // Haunted spectral enemy with expressive snout/wings + luminous neon-emerald spirit rim!
+        b.ellipseShaded(cx, cy - 1 + bob, 10.5, 9.5, hi, mid, dark, cWhite);
+        // Spectral wisps / tiny spirit ears
+        b.tri(cx - 9, cy - 6 + bob, cx - 12, cy - 12 + bob, cx - 4, cy - 8 + bob, hi);
+        b.tri(cx + 9, cy - 6 + bob, cx + 12, cy - 12 + bob, cx + 4, cy - 8 + bob, mid);
+        b.tri(cx - 9, cy + 4 + bob, cx - 7, fh - 3 + f, cx - 3, cy + 6 + bob, dark);
+        b.tri(cx - 3, cy + 6 + bob, cx, fh - 2 - f, cx + 3, cy + 6 + bob, mid);
+        b.tri(cx + 3, cy + 6 + bob, cx + 7, fh - 3 + f, cx + 9, cy + 4 + bob, dark);
+        // Deep hollow eyes + bright gleam
+        b.rect(cx - 6, cy - 4 + bob, 4, 4, cOut);
+        b.rect(cx + 2, cy - 4 + bob, 4, 4, cOut);
+        b.px(cx - 5, cy - 3 + bob, acc);
+        b.px(cx + 3, cy - 3 + bob, acc);
+        // Ectoplasm dark inner border + eerie glowing emerald aura!
+        b.outline(cOut);
+        b.solidOutline(hexToAbgr('#38ff94'));
+        sheet.blit(b, f * fw, 0);
+        continue;
+      }
     }
 
     b.outline(cOut);
@@ -1556,299 +1594,7 @@ function bakeEnemy(spec: EnemyVisualSpec): EnemySpriteSet {
   };
 }
 
-// ============================================================================
-// All 8 Bosses (Flagship Primal Eye 96x96 + Stylized 80x80..96x96 Bosses)
-// ============================================================================
-
-function bakeBosses(): {
-  bosses: Map<BossId, BossSpriteSet>;
-  primalEyeParts: { iris: HTMLCanvasElement; tendril: HTMLCanvasElement };
-} {
-  const bosses = new Map<BossId, BossSpriteSet>();
-  const cOut = hexToAbgr(OUTLINE_DARK);
-  const cWhite = hexToAbgr(HIGHLIGHT_CREAM);
-
-  // 1) PRIMAL EYE (96x96 massive pulsing organic bark-and-violet eyeball!)
-  {
-    const fw = 96;
-    const fh = 96;
-    const sheet = new PixelBuf(fw * 2, fh);
-    const b = new PixelBuf(fw, fh);
-    const barkHi = hexToAbgr('#c27d47');
-    const barkMid = hexToAbgr('#824929');
-    const barkDark = hexToAbgr('#472219');
-    const mossHi = hexToAbgr('#9ef53d');
-    const mossMid = hexToAbgr('#4cb828');
-    const scleraHi = hexToAbgr('#fff8e6');
-    const scleraMid = hexToAbgr('#ebd6b8');
-    const vein = hexToAbgr('#cc3b73');
-
-    for (let f = 0; f < 2; f++) {
-      b.clear();
-      const pulse = f === 1 ? 2 : 0;
-      const cx = 48;
-      const cy = 48;
-
-      // Spiky ancient bark crown & root horns radiating from outer body
-      for (let a = 0; a < 10; a++) {
-        const th = (a / 10) * Math.PI * 2 + f * 0.08;
-        const x1 = cx + Math.round(Math.cos(th - 0.18) * 32);
-        const y1 = cy + Math.round(Math.sin(th - 0.18) * 32);
-        const x2 = cx + Math.round(Math.cos(th + 0.18) * 32);
-        const y2 = cy + Math.round(Math.sin(th + 0.18) * 32);
-        const tipX = cx + Math.round(Math.cos(th) * (44 + (a % 2) * 3));
-        const tipY = cy + Math.round(Math.sin(th) * (44 + (a % 2) * 3));
-        b.tri(x1, y1, tipX, tipY, x2, y2, a % 2 === 0 ? barkMid : mossMid);
-      }
-
-      // Main pulsing organic eye socket shell
-      b.ellipseShaded(cx, cy, 36 + pulse, 34 - pulse * 0.5, barkHi, barkMid, barkDark);
-      // Lush moss crown across top brow
-      b.ellipseShaded(cx, cy - 22, 28, 10, mossHi, mossMid, barkDark);
-      // Glowing veined cream sclera
-      b.ellipseShaded(cx, cy, 27 + pulse * 0.5, 24, scleraHi, scleraMid, hexToAbgr('#bfa091'), cWhite);
-      // Organic crimson veins
-      b.line(cx - 24, cy - 6, cx - 15, cy - 3, vein);
-      b.line(cx - 22, cy + 8, cx - 14, cy + 5, vein);
-      b.line(cx + 24, cy - 5, cx + 16, cy - 2, vein);
-      b.line(cx + 21, cy + 9, cx + 14, cy + 6, vein);
-
-      // Thick upper & lower bark eyelids
-      b.ellipse(cx, cy - 23, 24, 6, barkDark);
-      b.ellipse(cx, cy + 23, 22, 5, barkDark);
-
-      b.outline(cOut);
-      sheet.blit(b, f * fw, 0);
-    }
-    bosses.set('primal_eye', {
-      sheet: sheet.toCanvas(),
-      flash: sheet.toWhiteFlashCanvas(),
-      frameW: fw,
-      frameH: fh,
-    });
-  }
-
-  // Primal Eye dynamic tracking iris (28x28) + orbiting thorny vine bulb (24x24)
-  const irisBuf = new PixelBuf(28, 28);
-  irisBuf.ellipseShaded(
-    14,
-    14,
-    11,
-    11,
-    hexToAbgr('#c7ff4d'),
-    hexToAbgr('#38cc38'),
-    hexToAbgr('#125930'),
-  );
-  irisBuf.ellipse(14, 14, 7.5, 7.5, hexToAbgr('#ffae24'));
-  // Vertical reptilian slit pupil
-  irisBuf.ellipse(14, 14, 3, 8.5, cOut);
-  irisBuf.rect(10, 8, 3, 3, cWhite);
-  irisBuf.px(17, 17, cWhite);
-  irisBuf.outline(cOut);
-
-  const tendrilBuf = new PixelBuf(24, 24);
-  tendrilBuf.ellipseShaded(
-    12,
-    12,
-    8,
-    8,
-    hexToAbgr('#a8ff4d'),
-    hexToAbgr('#3ca626'),
-    hexToAbgr('#195420'),
-    cWhite,
-  );
-  tendrilBuf.tri(12, 1, 9, 6, 15, 6, hexToAbgr('#ff427a'));
-  tendrilBuf.tri(12, 23, 9, 18, 15, 18, hexToAbgr('#ff427a'));
-  tendrilBuf.tri(1, 12, 6, 9, 6, 15, hexToAbgr('#ff427a'));
-  tendrilBuf.tri(23, 12, 18, 9, 18, 15, hexToAbgr('#ff427a'));
-  tendrilBuf.outline(cOut);
-
-  // Remaining 7 Bosses (bespoke pixel silhouettes!)
-  const otherBosses: ReadonlyArray<{
-    id: BossId;
-    hi: string;
-    mid: string;
-    dark: string;
-    acc: string;
-    eye: string;
-    shape: 'dino' | 'boar' | 'skull' | 'bull' | 'sphinx' | 'shadow' | 'sovereign';
-  }> = [
-    {
-      id: 'dino_behemoth',
-      hi: '#78e659',
-      mid: '#2e9938',
-      dark: '#144f28',
-      acc: '#ffd84d',
-      eye: '#ff3858',
-      shape: 'dino',
-    },
-    {
-      id: 'magma_boar_king',
-      hi: '#ff8a24',
-      mid: '#cc291f',
-      dark: '#4d1424',
-      acc: '#ffe84d',
-      eye: '#fff799',
-      shape: 'boar',
-    },
-    {
-      id: 'bone_colossus',
-      hi: '#fff2d6',
-      mid: '#cbb594',
-      dark: '#6e5847',
-      acc: '#38ebd9',
-      eye: '#38ebd9',
-      shape: 'skull',
-    },
-    {
-      id: 'mecha_bull',
-      hi: '#c4cfde',
-      mid: '#6c7a94',
-      dark: '#333b52',
-      acc: '#ffad16',
-      eye: '#ff2b4a',
-      shape: 'bull',
-    },
-    {
-      id: 'electro_sphinx',
-      hi: '#ffe866',
-      mid: '#d4961f',
-      dark: '#6e4214',
-      acc: '#59f2ff',
-      eye: '#59f2ff',
-      shape: 'sphinx',
-    },
-    {
-      id: 'shadow_doppelganger',
-      hi: '#9e38d4',
-      mid: '#4d1473',
-      dark: '#1d0d29',
-      acc: '#ff006a',
-      eye: '#24ff78',
-      shape: 'shadow',
-    },
-    {
-      id: 'nightmare_sovereign',
-      hi: '#ff3b9a',
-      mid: '#781480',
-      dark: '#1c0829',
-      acc: '#24ff78',
-      eye: '#ffe838',
-      shape: 'sovereign',
-    },
-  ];
-
-  for (let i = 0; i < otherBosses.length; i++) {
-    const spec = otherBosses[i]!;
-    const fw = 84;
-    const fh = 84;
-    const sheet = new PixelBuf(fw * 2, fh);
-    const b = new PixelBuf(fw, fh);
-    const hi = hexToAbgr(spec.hi);
-    const mid = hexToAbgr(spec.mid);
-    const dark = hexToAbgr(spec.dark);
-    const acc = hexToAbgr(spec.acc);
-    const eye = hexToAbgr(spec.eye);
-
-    for (let f = 0; f < 2; f++) {
-      b.clear();
-      const bob = f === 1 ? -2 : 0;
-      const cx = 42;
-      const cy = 44 + bob;
-
-      if (spec.shape === 'dino') {
-        b.ellipseShaded(cx - 4, cy + 6, 24, 20, hi, mid, dark);
-        b.ellipseShaded(cx + 12, cy - 14, 18, 13, hi, mid, dark, cWhite);
-        // Back spines + teeth
-        for (let s = 0; s < 4; s++) {
-          b.tri(cx - 24 + s * 6, cy - 8 - s * 3, cx - 28 + s * 6, cy - 16 - s * 3, cx - 18 + s * 6, cy - 10 - s * 3, acc);
-        }
-        b.rect(cx + 14, cy - 18, 5, 5, eye);
-        b.rect(cx + 10, cy - 5, 16, 4, cWhite);
-      } else if (spec.shape === 'boar') {
-        b.ellipseShaded(cx, cy + 2, 28, 22, hi, mid, dark);
-        // Blazing crown + tusks
-        b.tri(cx - 14, cy - 18, cx - 8, cy - 34, cx, cy - 18, acc);
-        b.tri(cx - 4, cy - 18, cx + 4, cy - 36, cx + 12, cy - 18, acc);
-        b.tri(cx - 24, cy + 8, cx - 34, cy - 6, cx - 18, cy + 2, cWhite);
-        b.tri(cx + 24, cy + 8, cx + 34, cy - 6, cx + 18, cy + 2, cWhite);
-        b.rect(cx - 12, cy - 6, 6, 5, eye);
-        b.rect(cx + 6, cy - 6, 6, 5, eye);
-      } else if (spec.shape === 'skull') {
-        // Towering desert skull golem with spirit flame core
-        b.ellipseShaded(cx, cy - 10, 22, 18, hi, mid, dark, cWhite);
-        b.rect(cx - 14, cy + 6, 28, 14, mid);
-        b.rect(cx - 10, cy + 20, 20, 14, dark);
-        b.ellipse(cx, cy + 24, 8, 8, acc);
-        b.ellipse(cx - 9, cy - 10, 6, 6, cOut);
-        b.ellipse(cx + 9, cy - 10, 6, 6, cOut);
-        b.ellipse(cx - 9, cy - 10, 3, 3, eye);
-        b.ellipse(cx + 9, cy - 10, 3, 3, eye);
-      } else if (spec.shape === 'bull') {
-        b.rect(cx - 24, cy - 14, 48, 36, mid);
-        b.rect(cx - 22, cy - 12, 44, 6, hi);
-        // Giant curved brass bull horns
-        b.tri(cx - 24, cy - 8, cx - 38, cy - 28, cx - 18, cy - 14, acc);
-        b.tri(cx + 24, cy - 8, cx + 38, cy - 28, cx + 18, cy - 14, acc);
-        // Glowing red cyclops visor
-        b.rect(cx - 16, cy - 4, 32, 6, cOut);
-        b.rect(cx - 12 + f * 4, cy - 3, 20, 4, eye);
-        b.ellipse(cx, cy + 12, 7, 5, acc);
-      } else if (spec.shape === 'sphinx') {
-        // Winged electric guardian sphinx
-        b.tri(cx - 16, cy, cx - 40, cy - 16 + f * 6, cx - 18, cy + 14, acc);
-        b.tri(cx + 16, cy, cx + 40, cy - 16 + f * 6, cx + 18, cy + 14, acc);
-        b.ellipseShaded(cx, cy + 4, 22, 18, hi, mid, dark);
-        b.rect(cx - 18, cy - 22, 36, 16, mid);
-        b.rect(cx - 14, cy - 20, 28, 3, acc);
-        b.rect(cx - 10, cy - 12, 5, 4, eye);
-        b.rect(cx + 5, cy - 12, 5, 4, eye);
-      } else if (spec.shape === 'shadow') {
-        // Giant menacing mirror-Krunk with jagged shadow aura!
-        b.ellipseShaded(cx, cy + 2, 24, 23, hi, mid, dark);
-        b.tri(cx - 18, cy - 14, cx - 28, cy - 36, cx - 6, cy - 18, acc);
-        b.tri(cx + 18, cy - 14, cx + 28, cy - 36, cx + 6, cy - 18, acc);
-        b.rect(cx - 12, cy - 6, 8, 9, acc);
-        b.rect(cx + 4, cy - 6, 8, 9, acc);
-        b.rect(cx - 9, cy - 4, 4, 5, eye);
-        b.rect(cx + 6, cy - 4, 4, 5, eye);
-      } else {
-        // Nightmare Sovereign — crowned eldritch eclipse tyrant!
-        b.tri(cx - 28, cy + 28, cx, cy - 12, cx + 28, cy + 28, dark);
-        b.ellipseShaded(cx, cy - 6, 24, 22, hi, mid, dark);
-        // 3-point neon rift crown
-        b.tri(cx - 20, cy - 22, cx - 24, cy - 38, cx - 10, cy - 24, acc);
-        b.tri(cx - 8, cy - 24, cx, cy - 40, cx + 8, cy - 24, acc);
-        b.tri(cx + 10, cy - 24, cx + 24, cy - 38, cx + 20, cy - 22, acc);
-        // Tri-eye eldritch gaze
-        b.ellipse(cx - 10, cy - 6, 5, 5, eye);
-        b.ellipse(cx + 10, cy - 6, 5, 5, eye);
-        b.ellipse(cx, cy - 16, 4.5, 4.5, acc);
-        b.px(cx - 10, cy - 6, cOut);
-        b.px(cx + 10, cy - 6, cOut);
-        b.px(cx, cy - 16, cOut);
-      }
-
-      b.outline(cOut);
-      sheet.blit(b, f * fw, 0);
-    }
-
-    bosses.set(spec.id, {
-      sheet: sheet.toCanvas(),
-      flash: sheet.toWhiteFlashCanvas(),
-      frameW: fw,
-      frameH: fh,
-    });
-  }
-
-  return {
-    bosses,
-    primalEyeParts: {
-      iris: irisBuf.toCanvas(),
-      tendril: tendrilBuf.toCanvas(),
-    },
-  };
-}
+// All 8 Colossal 112x112 4-Frame 16-Bit Bosses are baked by BossPixelArt.ts
 
 function bakeFx(): Map<string, HTMLCanvasElement> {
   const map = new Map<string, HTMLCanvasElement>();
@@ -2031,10 +1777,10 @@ export class ProceduralPixelAtlas {
       this.enemies.set(id, bakeEnemy(ENEMY_VISUALS[id]));
     }
 
-    // 5. All 8 Bosses + Primal Eye dynamic parts
-    const bakedBosses = bakeBosses();
+    // 5. All 8 Bosses + Primal Eye dynamic parts (Colossal 112x112 4-frame 16-bit pixel art!)
+    const bakedBosses = bakeAllBossSprites();
     for (const [k, v] of bakedBosses.bosses) this.bosses.set(k, v);
-    this.primalEyeIris = bakedBosses.primalEyeParts.iris;
-    this.primalEyeTendril = bakedBosses.primalEyeParts.tendril;
+    this.primalEyeIris = bakedBosses.primalEyeIris;
+    this.primalEyeTendril = bakedBosses.primalEyeTendril;
   }
 }

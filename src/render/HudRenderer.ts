@@ -205,20 +205,23 @@ export class HudRenderer {
 
           const farW = pSet.far.width;
           const farOff = Math.round((timeSec * 8) % farW);
+          const farY = pSet.far.height >= VIEWPORT_H ? -10 : 118;
           for (let x = -farOff; x < VIEWPORT_W; x += farW) {
-            ctx.drawImage(pSet.far, x, 118);
+            ctx.drawImage(pSet.far, x, farY);
           }
 
           const midW = pSet.mid.width;
           const midOff = Math.round((timeSec * 18) % midW);
+          const midY = pSet.mid.height >= VIEWPORT_H ? -10 : 142;
           for (let x = -midOff; x < VIEWPORT_W; x += midW) {
-            ctx.drawImage(pSet.mid, x, 142);
+            ctx.drawImage(pSet.mid, x, midY);
           }
 
           const nearW = pSet.near.width;
           const nearOff = Math.round((timeSec * 32) % nearW);
+          const nearY = pSet.near.height >= VIEWPORT_H ? -10 : 188;
           for (let x = -nearOff; x < VIEWPORT_W; x += nearW) {
-            ctx.drawImage(pSet.near, x, 188);
+            ctx.drawImage(pSet.near, x, nearY);
           }
         } else {
           ctx.fillStyle = '#1b57cc';
